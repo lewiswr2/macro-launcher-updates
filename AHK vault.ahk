@@ -1,5 +1,6 @@
 ﻿#Requires AutoHotkey v2.0
 #SingleInstance Force
+global LAUNCHER_VERSION := "1.0.0"
 
 ; ================= CONFIG =================
 global APP_DIR      := A_AppData "\MacroLauncher"
