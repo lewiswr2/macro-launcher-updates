@@ -1,11 +1,9 @@
 {
   "version": "1.0.6",
   "zip_url": "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/macros.zip"
-    "changelog": [
-"added Key master macro",
-      "updated UI"
-  ]
+"changelog": "- Added new macros\n-Improved updater stability"
 }
+
 
 
 
