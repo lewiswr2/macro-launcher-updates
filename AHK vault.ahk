@@ -142,7 +142,7 @@ JsonGet(json, key) {
 CreateMainGui() {
     global mainGui
 
-mainGui := Gui(, "Macro Launcher")
+mainGui := Gui(, "AHK vault")
 mainGui.SetFont("s14", "Segoe UI")
     mainGui.Add("Text", "x20 y20", "Select Category")
     ; ---- Helpful links (bottom) ----
@@ -541,4 +541,5 @@ DoSelfUpdate(url, newVer) {
     ; Exit current instance so file can be replaced
     ExitApp
 }
+
 
