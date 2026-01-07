@@ -1,6 +1,6 @@
 ﻿#Requires AutoHotkey v2.0
 #SingleInstance Force
-global LAUNCHER_VERSION := "1.0.0"
+global LAUNCHER_VERSION := "1.0.4"
 
 ; ================= CONFIG =================
 global APP_DIR      := A_AppData "\MacroLauncher"
@@ -541,3 +541,4 @@ DoSelfUpdate(url, newVer) {
     ; Exit current instance so file can be replaced
     ExitApp
 }
+
