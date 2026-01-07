@@ -4,8 +4,11 @@
   "changelog": [
     "added key master (ps99)",
     "added a TBC macro"
-  ]
+  ],
+  "launcher_version": "1.0.2",
+  "launcher_url": "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/launcher.ahk"
 }
+
 
 
 
