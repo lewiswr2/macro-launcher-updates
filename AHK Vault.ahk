@@ -7,7 +7,7 @@ global LAUNCHER_VERSION := "2.0.3"
 global APP_DIR := A_AppData "\MacroLauncher"
 global BASE_DIR := APP_DIR "\Macros"
 global VERSION_FILE := APP_DIR "\version.txt"
-global ICON_DIR := APP_DIR "\Icons"
+global ICON_DIR := BASE_DIR "\Icons"
 global MANIFEST_URL := "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/manifest.json"
 global mainGui := 0
 
@@ -70,7 +70,7 @@ SetTaskbarIcon() {
 }
 
 CheckForUpdatesPrompt() {
-    global MANIFEST_URL, VERSION_FILE, BASE_DIR, APP_DIR
+    global MANIFEST_URL, VERSION_FILE, BASE_DIR, APP_DIR, ICON_DIR
     
     tmpManifest := A_Temp "\manifest.json"
     tmpZip := A_Temp "\Macros.zip"
@@ -132,8 +132,7 @@ CheckForUpdatesPrompt() {
     while (!downloadSuccess && attempts < maxAttempts) {
         attempts++
         
-        iconsZipUrl := "YOUR_ICONS_ZIP_URL_HERE"  ; Add this line
-        if SafeDownload(iconsZipUrl, tmpZip, 30000) {
+        if SafeDownload(manifest.zip_url, tmpZip, 30000) {
             ; Validate download
             try {
                 fileSize := 0
@@ -159,7 +158,8 @@ CheckForUpdatesPrompt() {
     if !downloadSuccess {
         MsgBox(
             "Failed to download update after " maxAttempts " attempts.`n`n"
-            "Please check your internet connection and try again later.",
+            "Please check your internet connection and try again later.`n`n"
+            "Zip URL: " manifest.zip_url,
             "Download Failed",
             "Icon!"
         )
@@ -324,6 +324,7 @@ CheckForUpdatesPrompt() {
     iconBackupDir := A_Temp "\icon_backup_" A_Now
     iconBackupSuccess := false
     
+    ; Check if icons exist in the extracted zip
     if DirExist(extractDir "\icons") {
         ; Backup existing icons
         try {
@@ -336,12 +337,24 @@ CheckForUpdatesPrompt() {
             }
         }
         
+        ; Make sure ICON_DIR exists
+        try {
+            if !DirExist(ICON_DIR) {
+                DirCreate ICON_DIR
+            }
+        }
+        
         ; Install new icons
         try {
+            iconCount := 0
             Loop Files, extractDir "\icons\*.*" {
                 FileCopy A_LoopFilePath, ICON_DIR "\" A_LoopFileName, 1
+                iconCount++
             }
-            iconsUpdated := true
+            
+            if (iconCount > 0) {
+                iconsUpdated := true
+            }
             
             ; Cleanup icon backup if successful
             if iconBackupSuccess && DirExist(iconBackupDir) {
@@ -398,181 +411,6 @@ CheckForUpdatesPrompt() {
     MsgBox(updateMsg, "Update Finished", "Iconi")
 }
 
-SafeDownload(url, out, timeoutMs := 10000) {
-    if !url || !out {
-        return false
-    }
-    
-    try {
-        if FileExist(out) {
-            FileDelete out
-        }
-        
-        Download url, out
-        
-        ; Wait for file with timeout
-        startTime := A_TickCount
-        while !FileExist(out) {
-            if (A_TickCount - startTime > timeoutMs) {
-                return false
-            }
-            Sleep 100
-        }
-        
-        return FileExist(out) ? true : false
-    } catch {
-        return false
-    }
-}
-
-VersionCompare(a, b) {
-    a := RegExReplace(a, "[^0-9.]", "")
-    b := RegExReplace(b, "[^0-9.]", "")
-    
-    pa := StrSplit(a, ".")
-    pb := StrSplit(b, ".")
-    
-    Loop Max(pa.Length, pb.Length) {
-        va := pa.Has(A_Index) ? Integer(pa[A_Index]) : 0
-        vb := pb.Has(A_Index) ? Integer(pb[A_Index]) : 0
-        
-        if (va > vb)
-            return 1
-        if (va < vb)
-            return -1
-    }
-    
-    return 0
-}
-
-ParseManifest(json) {
-    if !json {
-        return false
-    }
-    
-    manifest := {
-        version: "",
-        zip_url: "",
-        changelog: [],
-        launcher_version: "",
-        launcher_url: ""
-    }
-    
-    try {
-        ; Extract version
-        if RegExMatch(json, '"version"\s*:\s*"([^"]+)"', &m) {
-            manifest.version := m[1]
-        }
-        
-        ; Extract zip_url
-        if RegExMatch(json, '"zip_url"\s*:\s*"([^"]+)"', &m) {
-            manifest.zip_url := m[1]
-        }
-        
-        ; Extract launcher_version
-        if RegExMatch(json, '"launcher_version"\s*:\s*"([^"]+)"', &m) {
-            manifest.launcher_version := m[1]
-        }
-        
-        ; Extract launcher_url
-        if RegExMatch(json, '"launcher_url"\s*:\s*"([^"]+)"', &m) {
-            manifest.launcher_url := m[1]
-        }
-        
-        ; Extract changelog array
-        pat := 's)"changelog"\s*:\s*\[(.*?)\]'
-        if RegExMatch(json, pat, &m) {
-            block := m[1]
-            pos := 1
-            while RegExMatch(block, 's)"((?:\\.|[^"\\])*)"', &mm, pos) {
-                item := mm[1]
-                item := StrReplace(item, '\"', '"')
-                item := StrReplace(item, "\\", "\")
-                item := StrReplace(item, "\n", "`n")
-                item := StrReplace(item, "\r", "`r")
-                manifest.changelog.Push(item)
-                pos := mm.Pos + mm.Len
-            }
-        }
-    } catch {
-        return false
-    }
-    
-    ; Validate required fields
-    if (!manifest.version || !manifest.zip_url) {
-        return false
-    }
-    
-    return manifest
-}
-
-CreateMainGui() {
-    global mainGui, COLORS, BASE_DIR, ICON_DIR
-    
-    mainGui := Gui("-Resize +Border", "AHK Vault")
-    mainGui.BackColor := COLORS.bg
-    mainGui.SetFont("s10", "Segoe UI")
-    
-    iconPath := ICON_DIR "\Launcher.png"
-    if FileExist(iconPath) {
-        try {
-            mainGui.Show("Hide")
-            mainGui.Opt("+Icon" iconPath)
-        }
-    }
-    
-    mainGui.Add("Text", "x0 y0 w550 h80 Background" COLORS.accent)
-    
-    ahkImage := ICON_DIR "\AHK.png"
-    if FileExist(ahkImage) {
-        try {
-            mainGui.Add("Picture", "x20 y15 w50 h50 BackgroundTrans", ahkImage)
-        }
-    }
-    
-    titleText := mainGui.Add("Text", "x80 y20 w280 h100 c" COLORS.text " BackgroundTrans", "AHK Vault")
-    titleText.SetFont("s24 bold")
-    
-    btnUpdate := mainGui.Add("Button", "x370 y25 w75 h35 Background" COLORS.success, "Update")
-    btnUpdate.SetFont("s10")
-    btnUpdate.OnEvent("Click", ManualUpdate)
-    
-    btnLog := mainGui.Add("Button", "x450 y25 w75 h35 Background" COLORS.accentHover, "Changelog")
-    btnLog.SetFont("s10")
-    btnLog.OnEvent("Click", ShowChangelog)
-    
-    mainGui.Add("Text", "x25 y100 w500 c" COLORS.text, "Games").SetFont("s12 bold")
-    mainGui.Add("Text", "x25 y125 w500 h1 Background" COLORS.border)
-    
-    categories := GetCategories()
-    yPos := 145
-    xPos := 25
-    cardWidth := 500
-    cardHeight := 70
-    
-    if (categories.Length = 0) {
-        noGameText := mainGui.Add("Text", "x25 y145 w500 h120 c" COLORS.textDim " Center", 
-            "No game categories found`n`nPlace game folders in:`n" BASE_DIR)
-        noGameText.SetFont("s10")
-        yPos := 275
-    } else {
-        for category in categories {
-            CreateCategoryCard(mainGui, category, xPos, yPos, cardWidth, cardHeight)
-            yPos += cardHeight + 12
-        }
-    }
-    
-    bottomY := yPos + 15
-    mainGui.Add("Text", "x0 y" bottomY " w550 h1 Background" COLORS.border)
-    
-    linkY := bottomY + 15
-    CreateLink(mainGui, "Discord", "https://discord.gg/xVmSTVxQt9", 25, linkY)
-    CreateLink(mainGui, "YouTube", "https://www.youtube.com/@Reversals-ux9tg", 115, linkY)
-    CreateLink(mainGui, "Guide", "https://docs.google.com/document/d/1Z3_9i0TE8WTX0J5o9iwnJ1ybOJ7LFtKeuhTpcumtHXk/edit?tab=t.0", 215, linkY)
-    
-    mainGui.Show("w550 h" (bottomY + 60) " Center")
-}
-
 ManualUpdate(*) {
     global MANIFEST_URL, VERSION_FILE, BASE_DIR, APP_DIR, ICON_DIR
     
@@ -595,7 +433,8 @@ ManualUpdate(*) {
     if !SafeDownload(MANIFEST_URL, tmpManifest) {
         MsgBox(
             "Failed to download update information.`n`n"
-            "Please check your internet connection.",
+            "Please check your internet connection.`n`n"
+            "Manifest URL: " MANIFEST_URL,
             "Download Failed",
             "Icon!"
         )
@@ -660,8 +499,7 @@ ManualUpdate(*) {
     while (!downloadSuccess && attempts < maxAttempts) {
         attempts++
         
-        iconsZipUrl := "YOUR_ICONS_ZIP_URL_HERE"  ; Add this line
-        if SafeDownload(iconsZipUrl, tmpZip, 30000) {
+        if SafeDownload(manifest.zip_url, tmpZip, 30000) {
             try {
                 fileSize := 0
                 Loop Files, tmpZip
@@ -686,7 +524,8 @@ ManualUpdate(*) {
     if !downloadSuccess {
         MsgBox(
             "Failed to download update after " maxAttempts " attempts.`n`n"
-            "Please check your internet connection and try again later.",
+            "Please check your internet connection and try again later.`n`n"
+            "Zip URL: " manifest.zip_url,
             "Download Failed",
             "Icon!"
         )
@@ -844,7 +683,9 @@ ManualUpdate(*) {
     iconBackupDir := A_Temp "\icon_backup_" A_Now
     iconBackupSuccess := false
     
+    ; Check if icons exist in the extracted zip
     if DirExist(extractDir "\icons") {
+        ; Backup existing icons
         try {
             if DirExist(ICON_DIR) {
                 DirCreate iconBackupDir
@@ -855,11 +696,24 @@ ManualUpdate(*) {
             }
         }
         
+        ; Make sure ICON_DIR exists
         try {
+            if !DirExist(ICON_DIR) {
+                DirCreate ICON_DIR
+            }
+        }
+        
+        ; Install new icons
+        try {
+            iconCount := 0
             Loop Files, extractDir "\icons\*.*" {
                 FileCopy A_LoopFilePath, ICON_DIR "\" A_LoopFileName, 1
+                iconCount++
             }
-            iconsUpdated := true
+            
+            if (iconCount > 0) {
+                iconsUpdated := true
+            }
             
             if iconBackupSuccess && DirExist(iconBackupDir) {
                 try {
@@ -920,6 +774,202 @@ ManualUpdate(*) {
     }
 }
 
+SafeDownload(url, out, timeoutMs := 10000) {
+    if !url || !out {
+        MsgBox "SafeDownload: Invalid parameters`nURL: " url "`nOut: " out, "Debug", "Icon!"
+        return false
+    }
+    
+    try {
+        if FileExist(out) {
+            FileDelete out
+        }
+        
+        ; Show what we're downloading
+        ToolTip "Downloading from:`n" url
+        
+        Download url, out
+        
+        ; Wait for file with timeout
+        startTime := A_TickCount
+        while !FileExist(out) {
+            if (A_TickCount - startTime > timeoutMs) {
+                ToolTip
+                MsgBox "Download timeout after " (timeoutMs/1000) " seconds`nURL: " url, "Timeout", "Icon!"
+                return false
+            }
+            Sleep 100
+        }
+        
+        ToolTip
+        
+        ; Verify file size
+        fileSize := 0
+        Loop Files, out
+            fileSize := A_LoopFileSize
+        
+        if (fileSize < 100) {
+            MsgBox "Downloaded file is too small (" fileSize " bytes)`nURL: " url, "Error", "Icon!"
+            try FileDelete out
+            return false
+        }
+        
+        return true
+    } catch as err {
+        ToolTip
+        MsgBox "Download error: " err.Message "`nURL: " url, "Error", "Icon!"
+        return false
+    }
+}
+
+VersionCompare(a, b) {
+    a := RegExReplace(a, "[^0-9.]", "")
+    b := RegExReplace(b, "[^0-9.]", "")
+    
+    pa := StrSplit(a, ".")
+    pb := StrSplit(b, ".")
+    
+    Loop Max(pa.Length, pb.Length) {
+        va := pa.Has(A_Index) ? Integer(pa[A_Index]) : 0
+        vb := pb.Has(A_Index) ? Integer(pb[A_Index]) : 0
+        
+        if (va > vb)
+            return 1
+        if (va < vb)
+            return -1
+    }
+    
+    return 0
+}
+
+ParseManifest(json) {
+    if !json {
+        return false
+    }
+    
+    manifest := {
+        version: "",
+        zip_url: "",
+        changelog: [],
+        launcher_version: "",
+        launcher_url: ""
+    }
+    
+    try {
+        ; Extract version
+        if RegExMatch(json, '"version"\s*:\s*"([^"]+)"', &m) {
+            manifest.version := m[1]
+        }
+        
+        ; Extract zip_url
+        if RegExMatch(json, '"zip_url"\s*:\s*"([^"]+)"', &m) {
+            manifest.zip_url := m[1]
+        }
+        
+        ; Extract launcher_version
+        if RegExMatch(json, '"launcher_version"\s*:\s*"([^"]+)"', &m) {
+            manifest.launcher_version := m[1]
+        }
+        
+        ; Extract launcher_url
+        if RegExMatch(json, '"launcher_url"\s*:\s*"([^"]+)"', &m) {
+            manifest.launcher_url := m[1]
+        }
+        
+        ; Extract changelog array
+        pat := 's)"changelog"\s*:\s*\[(.*?)\]'
+        if RegExMatch(json, pat, &m) {
+            block := m[1]
+            pos := 1
+            while RegExMatch(block, 's)"((?:\\.|[^"\\])*)"', &mm, pos) {
+                item := mm[1]
+                item := StrReplace(item, '\"', '"')
+                item := StrReplace(item, "\\", "\")
+                item := StrReplace(item, "\n", "`n")
+                item := StrReplace(item, "\r", "`r")
+                manifest.changelog.Push(item)
+                pos := mm.Pos + mm.Len
+            }
+        }
+    } catch {
+        return false
+    }
+    
+    ; Validate required fields
+    if (!manifest.version || !manifest.zip_url) {
+        return false
+    }
+    
+    return manifest
+}
+
+CreateMainGui() {
+    global mainGui, COLORS, BASE_DIR, ICON_DIR
+    
+    mainGui := Gui("-Resize +Border", "AHK Vault")
+    mainGui.BackColor := COLORS.bg
+    mainGui.SetFont("s10", "Segoe UI")
+    
+    iconPath := ICON_DIR "\Launcher.png"
+    if FileExist(iconPath) {
+        try {
+            mainGui.Show("Hide")
+            mainGui.Opt("+Icon" iconPath)
+        }
+    }
+    
+    mainGui.Add("Text", "x0 y0 w550 h80 Background" COLORS.accent)
+    
+    ahkImage := ICON_DIR "\AHK.png"
+    if FileExist(ahkImage) {
+        try {
+            mainGui.Add("Picture", "x20 y15 w50 h50 BackgroundTrans", ahkImage)
+        }
+    }
+    
+    titleText := mainGui.Add("Text", "x80 y20 w280 h100 c" COLORS.text " BackgroundTrans", "AHK Vault")
+    titleText.SetFont("s24 bold")
+    
+    btnUpdate := mainGui.Add("Button", "x370 y25 w75 h35 Background" COLORS.success, "Update")
+    btnUpdate.SetFont("s10")
+    btnUpdate.OnEvent("Click", ManualUpdate)
+    
+    btnLog := mainGui.Add("Button", "x450 y25 w75 h35 Background" COLORS.accentHover, "Changelog")
+    btnLog.SetFont("s10")
+    btnLog.OnEvent("Click", ShowChangelog)
+    
+    mainGui.Add("Text", "x25 y100 w500 c" COLORS.text, "Games").SetFont("s12 bold")
+    mainGui.Add("Text", "x25 y125 w500 h1 Background" COLORS.border)
+    
+    categories := GetCategories()
+    yPos := 145
+    xPos := 25
+    cardWidth := 500
+    cardHeight := 70
+    
+    if (categories.Length = 0) {
+        noGameText := mainGui.Add("Text", "x25 y145 w500 h120 c" COLORS.textDim " Center", 
+            "No game categories found`n`nPlace game folders in:`n" BASE_DIR)
+        noGameText.SetFont("s10")
+        yPos := 275
+    } else {
+        for category in categories {
+            CreateCategoryCard(mainGui, category, xPos, yPos, cardWidth, cardHeight)
+            yPos += cardHeight + 12
+        }
+    }
+    
+    bottomY := yPos + 15
+    mainGui.Add("Text", "x0 y" bottomY " w550 h1 Background" COLORS.border)
+    
+    linkY := bottomY + 15
+    CreateLink(mainGui, "Discord", "https://discord.gg/xVmSTVxQt9", 25, linkY)
+    CreateLink(mainGui, "YouTube", "https://www.youtube.com/@Reversals-ux9tg", 115, linkY)
+    CreateLink(mainGui, "Guide", "https://docs.google.com/document/d/1Z3_9i0TE8WTX0J5o9iwnJ1ybOJ7LFtKeuhTpcumtHXk/edit?tab=t.0", 215, linkY)
+    
+    mainGui.Show("w550 h" (bottomY + 60) " Center")
+}
+
 GetCategories() {
     global BASE_DIR
     arr := []
@@ -930,6 +980,10 @@ GetCategories() {
     
     try {
         Loop Files, BASE_DIR "\*", "D" {
+            ; Skip the Icons folder
+            if (StrLower(A_LoopFileName) = "icons") {
+                continue
+            }
             arr.Push(A_LoopFileName)
         }
     }
@@ -982,13 +1036,7 @@ GetGameIcon(category) {
     
     extensions := ["png", "ico", "jpg", "jpeg"]
     
-    for ext in extensions {
-        iconPath := BASE_DIR "\" category "." ext
-        if FileExist(iconPath) {
-            return iconPath
-        }
-    }
-    
+    ; Priority 1: ICON_DIR with category name
     for ext in extensions {
         iconPath := ICON_DIR "\" category "." ext
         if FileExist(iconPath) {
@@ -996,6 +1044,15 @@ GetGameIcon(category) {
         }
     }
     
+    ; Priority 2: BASE_DIR with category name (at game folder level)
+    for ext in extensions {
+        iconPath := BASE_DIR "\" category "." ext
+        if FileExist(iconPath) {
+            return iconPath
+        }
+    }
+    
+    ; Priority 3: Inside category folder as "icon.ext"
     for ext in extensions {
         iconPath := BASE_DIR "\" category "\icon." ext
         if FileExist(iconPath) {
@@ -1333,15 +1390,7 @@ GetMacroIcon(macroPath) {
         
         extensions := ["png", "ico", "jpg", "jpeg"]
         
-        ; 1. Check inside the macro folder (icon.png)
-        for ext in extensions {
-            iconPath := macroDir "\icon." ext
-            if FileExist(iconPath) {
-                return iconPath
-            }
-        }
-        
-        ; 2. Check ICON_DIR with macro name (MacroName.png)
+        ; Priority 1: ICON_DIR with macro name (MacroName.png)
         for ext in extensions {
             iconPath := ICON_DIR "\" macroName "." ext
             if FileExist(iconPath) {
@@ -1349,11 +1398,18 @@ GetMacroIcon(macroPath) {
             }
         }
         
-        ; 3. Check game category level (GameName\MacroName.png)
-        SplitPath macroDir, , &gameDir
-        SplitPath gameDir, &gameName
+        ; Priority 2: Inside the macro folder (icon.png)
         for ext in extensions {
-            iconPath := BASE_DIR "\" gameName "\" macroName "." ext
+            iconPath := macroDir "\icon." ext
+            if FileExist(iconPath) {
+                return iconPath
+            }
+        }
+        
+        ; Priority 3: Game category level (GameFolder\MacroName.png)
+        SplitPath macroDir, , &gameDir
+        for ext in extensions {
+            iconPath := gameDir "\" macroName "." ext
             if FileExist(iconPath) {
                 return iconPath
             }
