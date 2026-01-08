@@ -1,5 +1,5 @@
 {
-  "version": "1.1.0",
+  "version": "1.1.1",
   "zip_url": "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/Macros.zip",
   "changelog": [
     "Revamped",
@@ -7,6 +7,7 @@
   "launcher_version": "1.1.0",
   "launcher_url": "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/AHK%20vault.ahk"
 }
+
 
 
 
