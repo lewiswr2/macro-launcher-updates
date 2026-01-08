@@ -1064,6 +1064,7 @@ OpenCategory(category) {
     win.__data := macros
     win.__cards := []
     win.__currentSort := "Name (A-Z)"
+    win.__scrollPos := 0
     
     gameIcon := GetGameIcon(category)
     if (gameIcon && FileExist(gameIcon)) {
@@ -1090,7 +1091,7 @@ OpenCategory(category) {
     searchBox := win.Add("Edit", "x85 y" (controlY - 3) " w180 h28 Background" COLORS.card " c" COLORS.text)
     searchBox.SetFont("s10")
     win.__searchBox := searchBox
-    searchBox.OnEvent("Change", (*) => CategorySearchChanged(win))
+    searchBox.OnEvent("Change", (*) => RefreshCards(win))
     
     sortLabel := win.Add("Text", "x285 y" controlY " w40 c" COLORS.text, "Sort:")
     sortLabel.SetFont("s9 bold")
@@ -1100,7 +1101,7 @@ OpenCategory(category) {
     sortDDL.SetFont("s9")
     sortDDL.Choose(1)
     win.__sortDDL := sortDDL
-    sortDDL.OnEvent("Change", (*) => SortChanged(win))
+    sortDDL.OnEvent("Change", (*) => RefreshCards(win))
     
     filterLabel := win.Add("Text", "x495 y" controlY " w70 c" COLORS.text, "Creator:")
     filterLabel.SetFont("s9 bold")
@@ -1108,23 +1109,161 @@ OpenCategory(category) {
     creatorDDL := win.Add("DropDownList", "x565 y" (controlY - 4) " w160 h200 Background" COLORS.card " c" COLORS.text, ["All"])
     creatorDDL.SetFont("s9")
     win.__creatorDDL := creatorDDL
-    creatorDDL.OnEvent("Change", (*) => CategoryFilterChanged(win))
+    creatorDDL.OnEvent("Change", (*) => RefreshCards(win))
     
     PopulateCreatorFilter(win)
     
     win.__scrollY := 155
-    RenderMacroCards(win, "All", "", "Name (A-Z)")
+    win.__visibleHeight := 400
     
-    win.Show("w750 Center")
+    ; Initial render
+    RefreshCards(win)
+    
+    win.Show("w750 h575 Center")
 }
 
-SortChanged(win, *) {
-    if !win.HasProp("__searchBox") || !win.HasProp("__creatorDDL") || !win.HasProp("__sortDDL") {
+RefreshCards(win) {
+    if !win.HasProp("__data") {
         return
     }
     
-    win.__currentSort := win.__sortDDL.Text
-    RenderMacroCards(win, win.__creatorDDL.Text, win.__searchBox.Value, win.__sortDDL.Text)
+    ; Get filter values
+    creator := win.HasProp("__creatorDDL") ? win.__creatorDDL.Text : "All"
+    search := win.HasProp("__searchBox") ? win.__searchBox.Value : ""
+    sortBy := win.HasProp("__sortDDL") ? win.__sortDDL.Text : "Name (A-Z)"
+    
+    ; Update current sort
+    win.__currentSort := sortBy
+    
+    ; Clear existing cards COMPLETELY
+    if win.HasProp("__cards") && win.__cards.Length > 0 {
+        for ctrl in win.__cards {
+            try {
+                ctrl.Destroy()
+            } catch {
+                ; Already destroyed
+            }
+        }
+    }
+    win.__cards := []
+    
+    ; Filter - create NEW array
+    filtered := []
+    for item in win.__data {
+        creatorMatch := (creator = "All" || StrCompare(StrLower(Trim(item.info.Creator)), StrLower(Trim(creator))) = 0)
+        searchMatch := (search = "" || InStr(StrLower(item.info.Title), StrLower(search)))
+        
+        if (creatorMatch && searchMatch) {
+            filtered.Push(item)
+        }
+    }
+    
+    ; Sort ONLY if we have items
+    if (filtered.Length > 1) {
+        filtered := SortMacros(filtered, sortBy)
+    }
+    
+    ; Small delay to ensure GUI is ready
+    Sleep 50
+    
+    ; Render cards
+    RenderCards(win, filtered)
+}
+
+MakeBadge(win, title, x, y) {
+    global COLORS
+    
+    initial := SubStr(title, 1, 1)
+    iconColor := GetCategoryColor(title)
+    
+    badge := win.Add("Text", "x" x " y" y " w55 h55 Background" iconColor " Center", initial)
+    badge.SetFont("s20 bold c" COLORS.text)
+    win.__cards.Push(badge)
+}
+
+RenderCards(win, filtered) {
+    global COLORS
+    
+    if !win.HasProp("__scrollY") {
+        return
+    }
+    
+    scrollY := win.__scrollY
+    
+    if (filtered.Length = 0) {
+        noResult := win.Add("Text", "x25 y" scrollY " w700 h100 c" COLORS.textDim " Center", 
+            "No macros found matching your filters")
+        noResult.SetFont("s10")
+        win.__cards.Push(noResult)
+        return
+    }
+    
+    cardHeight := 85
+    cardSpacing := 12
+    yPos := scrollY
+    
+    ; Render each macro card
+    for index, item in filtered {
+        ; Card background
+        card := win.Add("Text", "x25 y" yPos " w700 h" cardHeight " Background" COLORS.card)
+        win.__cards.Push(card)
+        
+        ; Icon or badge
+        iconPath := GetMacroIcon(item.path)
+        hasIcon := false
+        
+        if (iconPath && FileExist(iconPath)) {
+            try {
+                pic := win.Add("Picture", "x40 y" (yPos + 15) " w55 h55 BackgroundTrans", iconPath)
+                win.__cards.Push(pic)
+                hasIcon := true
+            } catch {
+                ; Icon failed, will create badge below
+            }
+        }
+        
+        ; Create badge if no icon
+        if (!hasIcon) {
+            initial := SubStr(item.info.Title, 1, 1)
+            iconColor := GetCategoryColor(item.info.Title)
+            badge := win.Add("Text", "x40 y" (yPos + 15) " w55 h55 Background" iconColor " Center", initial)
+            badge.SetFont("s20 bold c" COLORS.text)
+            win.__cards.Push(badge)
+        }
+        
+        ; Title
+        titleCtrl := win.Add("Text", "x110 y" (yPos + 15) " w440 c" COLORS.text " BackgroundTrans", item.info.Title)
+        titleCtrl.SetFont("s11 bold")
+        win.__cards.Push(titleCtrl)
+        
+        ; Creator
+        creatorCtrl := win.Add("Text", "x110 y" (yPos + 38) " w440 c" COLORS.textDim " BackgroundTrans", "by " item.info.Creator)
+        creatorCtrl.SetFont("s9")
+        win.__cards.Push(creatorCtrl)
+        
+        ; Version
+        versionCtrl := win.Add("Text", "x110 y" (yPos + 58) " w55 h20 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
+        versionCtrl.SetFont("s8 bold")
+        win.__cards.Push(versionCtrl)
+        
+        ; Run button - capture path in local scope
+        currentPath := item.path
+        runBtn := win.Add("Button", "x620 y" (yPos + 15) " w90 h30 Background" COLORS.success, "▶ Run")
+        runBtn.SetFont("s10 bold")
+        runBtn.OnEvent("Click", (*) => RunMacro(currentPath))
+        win.__cards.Push(runBtn)
+        
+        ; Links button - capture links in local scope
+        if (Trim(item.info.Links) != "") {
+            currentLinks := item.info.Links
+            linksBtn := win.Add("Button", "x620 y" (yPos + 50) " w90 h25 Background" COLORS.accentAlt, "🔗 Links")
+            linksBtn.SetFont("s9")
+            linksBtn.OnEvent("Click", (*) => OpenLinks(currentLinks))
+            win.__cards.Push(linksBtn)
+        }
+        
+        yPos += cardHeight + cardSpacing
+    }
 }
 
 SortMacros(macros, sortBy) {
@@ -1181,216 +1320,6 @@ Partition(arr, sortBy, low, high) {
     arr[high] := temp
     
     return i + 1
-}
-
-RenderMacroCards(win, creator, search, sortBy := "Name (A-Z)") {
-    global COLORS
-    
-    if !win.HasProp("__cards") {
-        return
-    }
-    
-    ; Cleanup old controls
-    for ctrl in win.__cards {
-        try ctrl.Destroy()
-    }
-    win.__cards := []
-    
-    ; Filter macros
-    filtered := []
-    for item in win.__data {
-        passCreator := (creator = "All" || StrCompare(StrLower(Trim(item.info.Creator)), StrLower(Trim(creator))) = 0)
-        passSearch := (search = "" || InStr(StrLower(item.info.Title), StrLower(search)))
-        
-        if (passCreator && passSearch) {
-            filtered.Push(item)
-        }
-    }
-    
-    filtered := SortMacros(filtered, sortBy)
-    
-    ; Store filtered data for scrolling
-    win.__filteredData := filtered
-    win.__scrollPos := 0
-    
-    ; Create scroll container if it doesn't exist
-    if !win.HasProp("__scrollContainer") {
-        scrollY := win.__scrollY
-        scrollHeight := 400
-        
-        ; Create scroll bar
-        scrollBar := win.Add("Slider", "x730 y" scrollY " w20 h" scrollHeight " Vertical Range0-100 ToolTip")
-        scrollBar.OnEvent("Change", (*) => HandleScroll(win))
-        win.__scrollBar := scrollBar
-        win.__scrollContainer := true
-        win.__scrollHeight := scrollHeight
-        win.__visibleHeight := scrollHeight
-        
-        ; Update window height if needed
-        totalHeight := scrollY + scrollHeight + 20
-        win.Show("h" totalHeight)
-    }
-    
-    RenderVisibleCards(win)
-}
-
-RenderVisibleCards(win) {
-    global COLORS
-    
-    if !win.HasProp("__filteredData") || !win.HasProp("__cards") {
-        return
-    }
-    
-    ; Clean up existing cards
-    for ctrl in win.__cards {
-        try ctrl.Destroy()
-    }
-    win.__cards := []
-    
-    filtered := win.__filteredData
-    scrollY := win.__scrollY
-    
-    if (filtered.Length = 0) {
-        noResult := win.Add("Text", "x25 y" scrollY " w700 h100 c" COLORS.textDim " Center", 
-            "No macros found matching your filters")
-        noResult.SetFont("s10")
-        win.__cards.Push(noResult)
-        
-        if win.HasProp("__scrollBar") {
-            win.__scrollBar.Enabled := false
-        }
-        return
-    }
-    
-    ; Enable scrollbar
-    if win.HasProp("__scrollBar") {
-        win.__scrollBar.Enabled := true
-    }
-    
-    cardHeight := 85
-    cardSpacing := 12
-    totalCardsHeight := filtered.Length * (cardHeight + cardSpacing)
-    
-    ; Calculate scroll offset
-    scrollPos := win.HasProp("__scrollPos") ? win.__scrollPos : 0
-    maxScroll := Max(0, totalCardsHeight - win.__visibleHeight)
-    scrollOffset := (scrollPos / 100) * maxScroll
-    
-    ; Update scrollbar range
-    if win.HasProp("__scrollBar") {
-        if (maxScroll > 0) {
-            win.__scrollBar.Enabled := true
-        } else {
-            win.__scrollBar.Enabled := false
-            scrollOffset := 0
-        }
-    }
-    
-    ; Render visible cards
-    yPos := scrollY - scrollOffset
-    cardIndex := 0
-    
-    for item in filtered {
-        cardIndex++
-        
-        ; Only render cards that are visible or near visible area
-        if (yPos + cardHeight + scrollOffset < scrollY - 100) {
-            yPos += cardHeight + cardSpacing
-            continue
-        }
-        
-        if (yPos > scrollY + win.__visibleHeight + 100) {
-            break
-        }
-        
-        CreateMacroCard(win, item, 25, yPos, 700, cardHeight)
-        yPos += cardHeight + cardSpacing
-    }
-}
-
-HandleScroll(win) {
-    if !win.HasProp("__scrollBar") {
-        return
-    }
-    
-    win.__scrollPos := win.__scrollBar.Value
-    RenderVisibleCards(win)
-}
-
-CreateMacroCard(win, item, x, y, w, h) {
-    global COLORS
-    
-    ; Only create card if it's within visible bounds
-    if !win.HasProp("__scrollY") || !win.HasProp("__visibleHeight") {
-        return
-    }
-    
-    scrollY := win.__scrollY
-    visibleHeight := win.__visibleHeight
-    
-    ; Skip if card is completely outside visible area
-    if (y + h < scrollY || y > scrollY + visibleHeight) {
-        return
-    }
-    
-    card := win.Add("Text", "x" x " y" y " w" w " h" h " Background" COLORS.card)
-    win.__cards.Push(card)
-    
-    iconPath := GetMacroIcon(item.path)
-    iconX := x + 15
-    iconY := y + 15
-    iconSize := 55
-    
-    if (iconPath && FileExist(iconPath)) {
-        try {
-            pic := win.Add("Picture", "x" iconX " y" iconY " w" iconSize " h" iconSize " BackgroundTrans", iconPath)
-            win.__cards.Push(pic)
-        } catch {
-            CreateIconBadge(win, item.info.Title, iconX, iconY, iconSize)
-        }
-    } else {
-        CreateIconBadge(win, item.info.Title, iconX, iconY, iconSize)
-    }
-    
-    title := win.Add("Text", "x" (x + 85) " y" (y + 15) " w440 c" COLORS.text " BackgroundTrans", item.info.Title)
-    title.SetFont("s11 bold")
-    win.__cards.Push(title)
-    
-    creator := win.Add("Text", "x" (x + 85) " y" (y + 38) " w440 c" COLORS.textDim " BackgroundTrans", 
-        "by " item.info.Creator)
-    creator.SetFont("s9")
-    win.__cards.Push(creator)
-    
-    version := win.Add("Text", "x" (x + 85) " y" (y + 58) " w55 h20 Background" COLORS.accentAlt " c" COLORS.text " Center", 
-        "v" item.info.Version)
-    version.SetFont("s8 bold")
-    win.__cards.Push(version)
-    
-    runBtn := win.Add("Button", "x" (x + w - 105) " y" (y + 15) " w90 h30 Background" COLORS.success, "▶ Run")
-    runBtn.SetFont("s10 bold")
-    runBtn.OnEvent("Click", (*) => RunMacro(item.path))
-    win.__cards.Push(runBtn)
-    
-    if (Trim(item.info.Links) != "") {
-        linksBtn := win.Add("Button", "x" (x + w - 105) " y" (y + 50) " w90 h25 Background" COLORS.accentAlt, "🔗 Links")
-        linksBtn.SetFont("s9")
-        linksBtn.OnEvent("Click", (*) => OpenLinks(item.info.Links))
-        win.__cards.Push(linksBtn)
-    }
-}
-
-CreateIconBadge(win, title, x, y, size := 55) {
-    global COLORS
-    
-    initial := SubStr(title, 1, 1)
-    iconColor := GetCategoryColor(title)
-    fontSize := size = 55 ? "s20" : "s16"
-    
-    badge := win.Add("Text", "x" x " y" y " w" size " h" size " Background" iconColor " Center", initial)
-    badge.SetFont(fontSize " bold c" COLORS.text)
-    win.__cards.Push(badge)
-    
-    return badge
 }
 
 GetMacroIcon(macroPath) {
@@ -1519,22 +1448,6 @@ PopulateCreatorFilter(win) {
         win.__creatorDDL.Add(list)
         win.__creatorDDL.Choose(1)
     }
-}
-
-CategoryFilterChanged(win, *) {
-    if !win.HasProp("__searchBox") || !win.HasProp("__currentSort") || !win.HasProp("__creatorDDL") {
-        return
-    }
-    
-    RenderMacroCards(win, win.__creatorDDL.Text, win.__searchBox.Value, win.__currentSort)
-}
-
-CategorySearchChanged(win, *) {
-    if !win.HasProp("__creatorDDL") || !win.HasProp("__currentSort") || !win.HasProp("__searchBox") {
-        return
-    }
-    
-    RenderMacroCards(win, win.__creatorDDL.Text, win.__searchBox.Value, win.__currentSort)
 }
 
 ReadMacroInfo(macroDir) {
@@ -1697,12 +1610,7 @@ CheckForLauncherUpdate() {
         return
     }
     
-    msg := "Launcher update available.`n`nCurrent: " LAUNCHER_VERSION "`nLatest: " manifest.launcher_version "`n`nUpdate?"
-    
-    if MsgBox(msg, "Launcher Update", "YesNo Iconi") = "No" {
-        return
-    }
-    
+    ; AUTO-UPDATE WITHOUT ASKING
     DoSelfUpdate(manifest.launcher_url, manifest.launcher_version)
 }
 
