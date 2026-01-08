@@ -529,10 +529,14 @@ CreateMainGui() {
         }
     }
     
-    titleText := mainGui.Add("Text", "x80 y20 w330 h100 c" COLORS.text " BackgroundTrans", "AHK Vault")
+    titleText := mainGui.Add("Text", "x80 y20 w280 h100 c" COLORS.text " BackgroundTrans", "AHK Vault")
     titleText.SetFont("s24 bold")
     
-    btnLog := mainGui.Add("Button", "x420 y25 w105 h35 Background" COLORS.accentHover, "Changelog")
+    btnUpdate := mainGui.Add("Button", "x370 y25 w75 h35 Background" COLORS.success, "Update")
+    btnUpdate.SetFont("s10")
+    btnUpdate.OnEvent("Click", ManualUpdate)
+    
+    btnLog := mainGui.Add("Button", "x450 y25 w75 h35 Background" COLORS.accentHover, "Changelog")
     btnLog.SetFont("s10")
     btnLog.OnEvent("Click", ShowChangelog)
     
@@ -566,6 +570,352 @@ CreateMainGui() {
     CreateLink(mainGui, "Guide", "https://docs.google.com/document/d/1Z3_9i0TE8WTX0J5o9iwnJ1ybOJ7LFtKeuhTpcumtHXk/edit?tab=t.0", 215, linkY)
     
     mainGui.Show("w550 h" (bottomY + 60) " Center")
+}
+
+ManualUpdate(*) {
+    global MANIFEST_URL, VERSION_FILE, BASE_DIR, APP_DIR, ICON_DIR
+    
+    choice := MsgBox(
+        "Check for macro updates?`n`n"
+        "This will download the latest macros from the repository.",
+        "Check for Updates",
+        "YesNo Iconi"
+    )
+    
+    if (choice = "No") {
+        return
+    }
+    
+    tmpManifest := A_Temp "\manifest.json"
+    tmpZip := A_Temp "\Macros.zip"
+    extractDir := A_Temp "\macro_extract"
+    backupDir := A_Temp "\macro_backup_" A_Now
+    
+    if !SafeDownload(MANIFEST_URL, tmpManifest) {
+        MsgBox(
+            "Failed to download update information.`n`n"
+            "Please check your internet connection.",
+            "Download Failed",
+            "Icon!"
+        )
+        return
+    }
+    
+    json := ""
+    try {
+        json := FileRead(tmpManifest, "UTF-8")
+    } catch {
+        MsgBox "Failed to read update information.", "Error", "Icon!"
+        return
+    }
+    
+    manifest := ParseManifest(json)
+    if !manifest {
+        MsgBox "Failed to parse update information.", "Error", "Icon!"
+        return
+    }
+    
+    current := "0"
+    try {
+        if FileExist(VERSION_FILE) {
+            current := Trim(FileRead(VERSION_FILE))
+        }
+    }
+    
+    if VersionCompare(manifest.version, current) <= 0 {
+        MsgBox(
+            "You already have the latest version!`n`n"
+            "Current version: " current,
+            "Up to Date",
+            "Iconi"
+        )
+        return
+    }
+    
+    changelogText := ""
+    for line in manifest.changelog {
+        changelogText .= "• " line "`n"
+    }
+    
+    choice := MsgBox(
+        "Update available!`n`n"
+        "Current: " current "`n"
+        "Latest: " manifest.version "`n`n"
+        "What's new:`n" changelogText "`n"
+        "Download and install now?",
+        "Update Available",
+        "YesNo Iconi"
+    )
+    
+    if (choice = "No") {
+        return
+    }
+    
+    ; Download with retry
+    downloadSuccess := false
+    attempts := 0
+    maxAttempts := 3
+    
+    while (!downloadSuccess && attempts < maxAttempts) {
+        attempts++
+        
+        if SafeDownload(manifest.zip_url, tmpZip, 30000) {
+            try {
+                fileSize := 0
+                Loop Files, tmpZip
+                    fileSize := A_LoopFileSize
+                
+                if (fileSize >= 100) {
+                    downloadSuccess := true
+                } else {
+                    try FileDelete tmpZip
+                    if (attempts < maxAttempts) {
+                        Sleep 1000
+                    }
+                }
+            } catch {
+                if (attempts < maxAttempts) {
+                    Sleep 1000
+                }
+            }
+        }
+    }
+    
+    if !downloadSuccess {
+        MsgBox(
+            "Failed to download update after " maxAttempts " attempts.`n`n"
+            "Please check your internet connection and try again later.",
+            "Download Failed",
+            "Icon!"
+        )
+        return
+    }
+    
+    ; Extract
+    try {
+        if DirExist(extractDir) {
+            DirDelete extractDir, true
+        }
+        DirCreate extractDir
+    } catch as err {
+        MsgBox "Failed to create extraction directory: " err.Message, "Error", "Icon!"
+        return
+    }
+    
+    ; Try tar extraction
+    extractSuccess := false
+    try {
+        RunWait 'tar -xf "' tmpZip '" -C "' extractDir '"', , "Hide"
+        
+        hasContent := false
+        try {
+            Loop Files, extractDir "\*", "D" {
+                hasContent := true
+                break
+            }
+        }
+        extractSuccess := hasContent
+    } catch {
+        ; tar failed - try PowerShell as fallback
+    }
+    
+    ; Fallback to PowerShell if tar failed
+    if !extractSuccess {
+        try {
+            psCmd := 'powershell -Command "Expand-Archive -Path `"' tmpZip '`" -DestinationPath `"' extractDir '`" -Force"'
+            RunWait psCmd, , "Hide"
+            
+            hasContent := false
+            try {
+                Loop Files, extractDir "\*", "D" {
+                    hasContent := true
+                    break
+                }
+            }
+            extractSuccess := hasContent
+        } catch {
+            MsgBox(
+                "Failed to extract update archive.`n`n"
+                "Both tar and PowerShell extraction methods failed.",
+                "Extraction Failed",
+                "Icon!"
+            )
+            return
+        }
+    }
+    
+    if !extractSuccess {
+        MsgBox "Update failed: extraction produced no folders.", "Error", "Icon!"
+        return
+    }
+    
+    ; Check what was extracted
+    hasMacrosFolder := false
+    hasIconsFolder := false
+    hasLooseFolders := false
+    
+    try {
+        if DirExist(extractDir "\Macros") {
+            hasMacrosFolder := true
+        }
+        if DirExist(extractDir "\icons") {
+            hasIconsFolder := true
+        }
+        
+        Loop Files, extractDir "\*", "D" {
+            if (A_LoopFileName != "Macros" && A_LoopFileName != "icons") {
+                hasLooseFolders := true
+                break
+            }
+        }
+    }
+    
+    useNestedStructure := hasMacrosFolder
+    
+    if (!hasMacrosFolder && !hasLooseFolders) {
+        MsgBox "Update failed: No valid content found in zip file.", "Error", "Icon!"
+        return
+    }
+    
+    ; Backup existing macros
+    backupSuccess := false
+    if DirExist(BASE_DIR) {
+        try {
+            DirCreate backupDir
+            Loop Files, BASE_DIR "\*", "D" {
+                DirMove A_LoopFilePath, backupDir "\" A_LoopFileName, 1
+            }
+            backupSuccess := true
+        } catch {
+            ; Backup failed but continue anyway
+        }
+    }
+    
+    ; Install update - Macros
+    installSuccess := false
+    try {
+        if DirExist(BASE_DIR) {
+            DirDelete BASE_DIR, true
+        }
+        DirCreate BASE_DIR
+        
+        if useNestedStructure {
+            Loop Files, extractDir "\Macros\*", "D" {
+                DirMove A_LoopFilePath, BASE_DIR "\" A_LoopFileName, 1
+            }
+        } else {
+            Loop Files, extractDir "\*", "D" {
+                if (A_LoopFileName != "icons") {
+                    DirMove A_LoopFilePath, BASE_DIR "\" A_LoopFileName, 1
+                }
+            }
+        }
+        installSuccess := true
+    } catch as err {
+        MsgBox "Failed to install macro update: " err.Message, "Error", "Icon!"
+        
+        if backupSuccess {
+            try {
+                if DirExist(BASE_DIR) {
+                    DirDelete BASE_DIR, true
+                }
+                DirCreate BASE_DIR
+                
+                Loop Files, backupDir "\*", "D" {
+                    DirMove A_LoopFilePath, BASE_DIR "\" A_LoopFileName, 1
+                }
+                MsgBox "Update failed but your macros were restored from backup.", "Restored", "Iconi"
+            } catch {
+                MsgBox(
+                    "Critical error: Update failed and rollback failed.`n`n"
+                    "Backup location:`n" backupDir,
+                    "Critical Error",
+                    "Icon!"
+                )
+            }
+        }
+        return
+    }
+    
+    ; Install update - Icons
+    iconsUpdated := false
+    iconBackupDir := A_Temp "\icon_backup_" A_Now
+    iconBackupSuccess := false
+    
+    if DirExist(extractDir "\icons") {
+        try {
+            if DirExist(ICON_DIR) {
+                DirCreate iconBackupDir
+                Loop Files, ICON_DIR "\*.*" {
+                    FileCopy A_LoopFilePath, iconBackupDir "\" A_LoopFileName, 1
+                }
+                iconBackupSuccess := true
+            }
+        }
+        
+        try {
+            Loop Files, extractDir "\icons\*.*" {
+                FileCopy A_LoopFilePath, ICON_DIR "\" A_LoopFileName, 1
+            }
+            iconsUpdated := true
+            
+            if iconBackupSuccess && DirExist(iconBackupDir) {
+                try {
+                    DirDelete iconBackupDir, true
+                }
+            }
+        } catch as err {
+            if iconBackupSuccess {
+                try {
+                    Loop Files, iconBackupDir "\*.*" {
+                        FileCopy A_LoopFilePath, ICON_DIR "\" A_LoopFileName, 1
+                    }
+                }
+            }
+        }
+    }
+    
+    ; Cleanup backup if install succeeded
+    if installSuccess && backupSuccess {
+        try {
+            if DirExist(backupDir) {
+                DirDelete backupDir, true
+            }
+        }
+    }
+    
+    ; Update version file
+    try {
+        if FileExist(VERSION_FILE) {
+            FileDelete VERSION_FILE
+        }
+        FileAppend manifest.version, VERSION_FILE
+        RunWait 'attrib +h +s "' APP_DIR '"', , "Hide"
+    }
+    
+    ; Cleanup temp files
+    try {
+        if FileExist(tmpZip) {
+            FileDelete tmpZip
+        }
+        if DirExist(extractDir) {
+            DirDelete extractDir, true
+        }
+    }
+    
+    updateMsg := "Update complete!`n`nVersion " manifest.version " installed.`n`n"
+    if iconsUpdated {
+        updateMsg .= "✓ Icons updated`n"
+    }
+    updateMsg .= "`nChanges:`n" changelogText "`n`nRestart the launcher to see changes."
+    
+    MsgBox(updateMsg, "Update Finished", "Iconi")
+    
+    ; Refresh the GUI
+    try {
+        mainGui.Destroy()
+        CreateMainGui()
+    }
 }
 
 GetCategories() {
@@ -859,41 +1209,129 @@ RenderMacroCards(win, creator, search, sortBy := "Name (A-Z)") {
     
     filtered := SortMacros(filtered, sortBy)
     
-    yPos := win.__scrollY
-    xPos := 25
-    cardWidth := 700
-    cardHeight := 85
+    ; Store filtered data for scrolling
+    win.__filteredData := filtered
+    win.__scrollPos := 0
+    
+    ; Create scroll container if it doesn't exist
+    if !win.HasProp("__scrollContainer") {
+        scrollY := win.__scrollY
+        scrollHeight := 400
+        
+        ; Create scroll bar
+        scrollBar := win.Add("Slider", "x730 y" scrollY " w20 h" scrollHeight " Vertical Range0-100 ToolTip")
+        scrollBar.OnEvent("Change", (*) => HandleScroll(win))
+        win.__scrollBar := scrollBar
+        win.__scrollContainer := true
+        win.__scrollHeight := scrollHeight
+        win.__visibleHeight := scrollHeight
+        
+        ; Update window height if needed
+        totalHeight := scrollY + scrollHeight + 20
+        win.Show("h" totalHeight)
+    }
+    
+    RenderVisibleCards(win)
+}
+
+RenderVisibleCards(win) {
+    global COLORS
+    
+    if !win.HasProp("__filteredData") || !win.HasProp("__cards") {
+        return
+    }
+    
+    ; Clean up existing cards
+    for ctrl in win.__cards {
+        try ctrl.Destroy()
+    }
+    win.__cards := []
+    
+    filtered := win.__filteredData
+    scrollY := win.__scrollY
     
     if (filtered.Length = 0) {
-        noResults := win.Add("Text", "x25 y" yPos " w700 h100 c" COLORS.textDim " Center", 
-            "No macros match your search or filter")
-        noResults.SetFont("s11")
-        win.__cards.Push(noResults)
-        yPos += 120
-    } else {
-        for item in filtered {
-            CreateMacroCard(win, item, xPos, yPos, cardWidth, cardHeight)
-            yPos += cardHeight + 12
+        noResult := win.Add("Text", "x25 y" scrollY " w700 h100 c" COLORS.textDim " Center", 
+            "No macros found matching your filters")
+        noResult.SetFont("s10")
+        win.__cards.Push(noResult)
+        
+        if win.HasProp("__scrollBar") {
+            win.__scrollBar.Enabled := false
+        }
+        return
+    }
+    
+    ; Enable scrollbar
+    if win.HasProp("__scrollBar") {
+        win.__scrollBar.Enabled := true
+    }
+    
+    cardHeight := 85
+    cardSpacing := 12
+    totalCardsHeight := filtered.Length * (cardHeight + cardSpacing)
+    
+    ; Calculate scroll offset
+    scrollPos := win.HasProp("__scrollPos") ? win.__scrollPos : 0
+    maxScroll := Max(0, totalCardsHeight - win.__visibleHeight)
+    scrollOffset := (scrollPos / 100) * maxScroll
+    
+    ; Update scrollbar range
+    if win.HasProp("__scrollBar") {
+        if (maxScroll > 0) {
+            win.__scrollBar.Enabled := true
+        } else {
+            win.__scrollBar.Enabled := false
+            scrollOffset := 0
         }
     }
     
-    bottomY := yPos + 15
-    try {
-        sep := win.Add("Text", "x0 y" bottomY " w750 h1 Background" COLORS.border)
-        win.__cards.Push(sep)
+    ; Render visible cards
+    yPos := scrollY - scrollOffset
+    cardIndex := 0
+    
+    for item in filtered {
+        cardIndex++
+        
+        ; Only render cards that are visible or near visible area
+        if (yPos + cardHeight + scrollOffset < scrollY - 100) {
+            yPos += cardHeight + cardSpacing
+            continue
+        }
+        
+        if (yPos > scrollY + win.__visibleHeight + 100) {
+            break
+        }
+        
+        CreateMacroCard(win, item, 25, yPos, 700, cardHeight)
+        yPos += cardHeight + cardSpacing
+    }
+}
+
+HandleScroll(win) {
+    if !win.HasProp("__scrollBar") {
+        return
     }
     
-    ; Calculate appropriate window height
-    contentHeight := bottomY + 20
-    minHeight := 450
-    maxHeight := Min(A_ScreenHeight - 100, 900)
-    newHeight := Max(minHeight, Min(contentHeight, maxHeight))
-    
-    try win.Move(, , , newHeight)
+    win.__scrollPos := win.__scrollBar.Value
+    RenderVisibleCards(win)
 }
 
 CreateMacroCard(win, item, x, y, w, h) {
     global COLORS
+    
+    ; Only create card if it's within visible bounds
+    if !win.HasProp("__scrollY") || !win.HasProp("__visibleHeight") {
+        return
+    }
+    
+    scrollY := win.__scrollY
+    visibleHeight := win.__visibleHeight
+    
+    ; Skip if card is completely outside visible area
+    if (y + h < scrollY || y > scrollY + visibleHeight) {
+        return
+    }
     
     card := win.Add("Text", "x" x " y" y " w" w " h" h " Background" COLORS.card)
     win.__cards.Push(card)
