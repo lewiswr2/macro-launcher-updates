@@ -7,7 +7,7 @@ global LAUNCHER_VERSION := "2.0.3"
 global APP_DIR := A_AppData "\MacroLauncher"
 global BASE_DIR := APP_DIR "\Macros"
 global VERSION_FILE := APP_DIR "\version.txt"
-global ICON_DIR := APP_DIR "\icons"
+global ICON_DIR := APP_DIR "\Icons"
 global MANIFEST_URL := "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/manifest.json"
 global mainGui := 0
 
@@ -132,7 +132,8 @@ CheckForUpdatesPrompt() {
     while (!downloadSuccess && attempts < maxAttempts) {
         attempts++
         
-        if SafeDownload(manifest.zip_url, tmpZip, 30000) {
+        iconsZipUrl := "YOUR_ICONS_ZIP_URL_HERE"  ; Add this line
+        if SafeDownload(iconsZipUrl, tmpZip, 30000) {
             ; Validate download
             try {
                 fileSize := 0
@@ -659,7 +660,8 @@ ManualUpdate(*) {
     while (!downloadSuccess && attempts < maxAttempts) {
         attempts++
         
-        if SafeDownload(manifest.zip_url, tmpZip, 30000) {
+        iconsZipUrl := "YOUR_ICONS_ZIP_URL_HERE"  ; Add this line
+        if SafeDownload(iconsZipUrl, tmpZip, 30000) {
             try {
                 fileSize := 0
                 Loop Files, tmpZip
