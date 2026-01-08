@@ -1,7 +1,7 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 
-global LAUNCHER_VERSION := "2.0.3"
+global LAUNCHER_VERSION := "2.0.4"
 
 ; ================= CONFIG =================
 global APP_DIR := A_AppData "\MacroLauncher"
@@ -49,7 +49,6 @@ EnsureVersionFile() {
         try {
             FileAppend "0", VERSION_FILE
         } catch {
-            ; Silent fail - will default to "0" when read
         }
     }
 }
@@ -65,7 +64,6 @@ SetTaskbarIcon() {
             TraySetIcon("shell32.dll", 3)
         }
     } catch {
-        ; Icon setting failed - not critical
     }
 }
 
@@ -78,7 +76,6 @@ CheckForUpdatesPrompt() {
     backupDir := A_Temp "\macro_backup_" A_Now
     
     if !SafeDownload(MANIFEST_URL, tmpManifest) {
-        ; Silent fail on startup - user can manually check via changelog button
         return
     }
     
@@ -124,7 +121,6 @@ CheckForUpdatesPrompt() {
         return
     }
     
-    ; Download with retry
     downloadSuccess := false
     attempts := 0
     maxAttempts := 3
@@ -133,7 +129,6 @@ CheckForUpdatesPrompt() {
         attempts++
         
         if SafeDownload(manifest.zip_url, tmpZip, 30000) {
-            ; Validate download
             try {
                 fileSize := 0
                 Loop Files, tmpZip
@@ -166,7 +161,6 @@ CheckForUpdatesPrompt() {
         return
     }
     
-    ; Extract
     try {
         if DirExist(extractDir) {
             DirDelete extractDir, true
@@ -177,12 +171,10 @@ CheckForUpdatesPrompt() {
         return
     }
     
-    ; Try tar extraction
     extractSuccess := false
     try {
         RunWait 'tar -xf "' tmpZip '" -C "' extractDir '"', , "Hide"
         
-        ; Verify extraction
         hasContent := false
         try {
             Loop Files, extractDir "\*", "D" {
@@ -192,10 +184,8 @@ CheckForUpdatesPrompt() {
         }
         extractSuccess := hasContent
     } catch {
-        ; tar failed - try PowerShell as fallback
     }
     
-    ; Fallback to PowerShell if tar failed
     if !extractSuccess {
         try {
             psCmd := 'powershell -Command "Expand-Archive -Path `"' tmpZip '`" -DestinationPath `"' extractDir '`" -Force"'
@@ -226,7 +216,6 @@ CheckForUpdatesPrompt() {
         return
     }
     
-    ; Check what was extracted
     hasMacrosFolder := false
     hasIconsFolder := false
     hasLooseFolders := false
@@ -239,7 +228,6 @@ CheckForUpdatesPrompt() {
             hasIconsFolder := true
         }
         
-        ; Check for loose folders (old zip structure)
         Loop Files, extractDir "\*", "D" {
             if (A_LoopFileName != "Macros" && A_LoopFileName != "icons") {
                 hasLooseFolders := true
@@ -248,7 +236,6 @@ CheckForUpdatesPrompt() {
         }
     }
     
-    ; Determine zip structure
     useNestedStructure := hasMacrosFolder
     
     if (!hasMacrosFolder && !hasLooseFolders) {
@@ -256,7 +243,6 @@ CheckForUpdatesPrompt() {
         return
     }
     
-    ; Backup existing macros
     backupSuccess := false
     if DirExist(BASE_DIR) {
         try {
@@ -266,11 +252,9 @@ CheckForUpdatesPrompt() {
             }
             backupSuccess := true
         } catch {
-            ; Backup failed but continue anyway
         }
     }
     
-    ; Install update - Macros
     installSuccess := false
     try {
         if DirExist(BASE_DIR) {
@@ -279,12 +263,10 @@ CheckForUpdatesPrompt() {
         DirCreate BASE_DIR
         
         if useNestedStructure {
-            ; New structure: zip has Macros folder
             Loop Files, extractDir "\Macros\*", "D" {
                 DirMove A_LoopFilePath, BASE_DIR "\" A_LoopFileName, 1
             }
         } else {
-            ; Old structure: game folders are at root
             Loop Files, extractDir "\*", "D" {
                 if (A_LoopFileName != "icons") {
                     DirMove A_LoopFilePath, BASE_DIR "\" A_LoopFileName, 1
@@ -295,7 +277,6 @@ CheckForUpdatesPrompt() {
     } catch as err {
         MsgBox "Failed to install macro update: " err.Message, "Error", "Icon!"
         
-        ; Try to restore from backup
         if backupSuccess {
             try {
                 if DirExist(BASE_DIR) {
@@ -319,14 +300,11 @@ CheckForUpdatesPrompt() {
         return
     }
     
-    ; Install update - Icons
     iconsUpdated := false
     iconBackupDir := A_Temp "\icon_backup_" A_Now
     iconBackupSuccess := false
     
-    ; Check if icons exist in the extracted zip
     if DirExist(extractDir "\icons") {
-        ; Backup existing icons
         try {
             if DirExist(ICON_DIR) {
                 DirCreate iconBackupDir
@@ -337,14 +315,12 @@ CheckForUpdatesPrompt() {
             }
         }
         
-        ; Make sure ICON_DIR exists
         try {
             if !DirExist(ICON_DIR) {
                 DirCreate ICON_DIR
             }
         }
         
-        ; Install new icons
         try {
             iconCount := 0
             Loop Files, extractDir "\icons\*.*" {
@@ -356,14 +332,12 @@ CheckForUpdatesPrompt() {
                 iconsUpdated := true
             }
             
-            ; Cleanup icon backup if successful
             if iconBackupSuccess && DirExist(iconBackupDir) {
                 try {
                     DirDelete iconBackupDir, true
                 }
             }
         } catch as err {
-            ; Icon update failed - restore backup
             if iconBackupSuccess {
                 try {
                     Loop Files, iconBackupDir "\*.*" {
@@ -374,7 +348,6 @@ CheckForUpdatesPrompt() {
         }
     }
     
-    ; Cleanup backup if install succeeded
     if installSuccess && backupSuccess {
         try {
             if DirExist(backupDir) {
@@ -383,7 +356,6 @@ CheckForUpdatesPrompt() {
         }
     }
     
-    ; Update version file
     try {
         if FileExist(VERSION_FILE) {
             FileDelete VERSION_FILE
@@ -392,7 +364,6 @@ CheckForUpdatesPrompt() {
         RunWait 'attrib +h +s "' APP_DIR '"', , "Hide"
     }
     
-    ; Cleanup temp files
     try {
         if FileExist(tmpZip) {
             FileDelete tmpZip
@@ -491,7 +462,6 @@ ManualUpdate(*) {
         return
     }
     
-    ; Download with retry
     downloadSuccess := false
     attempts := 0
     maxAttempts := 3
@@ -532,7 +502,6 @@ ManualUpdate(*) {
         return
     }
     
-    ; Extract
     try {
         if DirExist(extractDir) {
             DirDelete extractDir, true
@@ -543,7 +512,6 @@ ManualUpdate(*) {
         return
     }
     
-    ; Try tar extraction
     extractSuccess := false
     try {
         RunWait 'tar -xf "' tmpZip '" -C "' extractDir '"', , "Hide"
@@ -557,10 +525,8 @@ ManualUpdate(*) {
         }
         extractSuccess := hasContent
     } catch {
-        ; tar failed - try PowerShell as fallback
     }
     
-    ; Fallback to PowerShell if tar failed
     if !extractSuccess {
         try {
             psCmd := 'powershell -Command "Expand-Archive -Path `"' tmpZip '`" -DestinationPath `"' extractDir '`" -Force"'
@@ -590,7 +556,6 @@ ManualUpdate(*) {
         return
     }
     
-    ; Check what was extracted
     hasMacrosFolder := false
     hasIconsFolder := false
     hasLooseFolders := false
@@ -618,7 +583,6 @@ ManualUpdate(*) {
         return
     }
     
-    ; Backup existing macros
     backupSuccess := false
     if DirExist(BASE_DIR) {
         try {
@@ -628,11 +592,9 @@ ManualUpdate(*) {
             }
             backupSuccess := true
         } catch {
-            ; Backup failed but continue anyway
         }
     }
     
-    ; Install update - Macros
     installSuccess := false
     try {
         if DirExist(BASE_DIR) {
@@ -678,14 +640,11 @@ ManualUpdate(*) {
         return
     }
     
-    ; Install update - Icons
     iconsUpdated := false
     iconBackupDir := A_Temp "\icon_backup_" A_Now
     iconBackupSuccess := false
     
-    ; Check if icons exist in the extracted zip
     if DirExist(extractDir "\icons") {
-        ; Backup existing icons
         try {
             if DirExist(ICON_DIR) {
                 DirCreate iconBackupDir
@@ -696,14 +655,12 @@ ManualUpdate(*) {
             }
         }
         
-        ; Make sure ICON_DIR exists
         try {
             if !DirExist(ICON_DIR) {
                 DirCreate ICON_DIR
             }
         }
         
-        ; Install new icons
         try {
             iconCount := 0
             Loop Files, extractDir "\icons\*.*" {
@@ -731,7 +688,6 @@ ManualUpdate(*) {
         }
     }
     
-    ; Cleanup backup if install succeeded
     if installSuccess && backupSuccess {
         try {
             if DirExist(backupDir) {
@@ -740,7 +696,6 @@ ManualUpdate(*) {
         }
     }
     
-    ; Update version file
     try {
         if FileExist(VERSION_FILE) {
             FileDelete VERSION_FILE
@@ -749,7 +704,6 @@ ManualUpdate(*) {
         RunWait 'attrib +h +s "' APP_DIR '"', , "Hide"
     }
     
-    ; Cleanup temp files
     try {
         if FileExist(tmpZip) {
             FileDelete tmpZip
@@ -767,7 +721,6 @@ ManualUpdate(*) {
     
     MsgBox(updateMsg, "Update Finished", "Iconi")
     
-    ; Refresh the GUI
     try {
         mainGui.Destroy()
         CreateMainGui()
@@ -776,7 +729,6 @@ ManualUpdate(*) {
 
 SafeDownload(url, out, timeoutMs := 10000) {
     if !url || !out {
-        MsgBox "SafeDownload: Invalid parameters`nURL: " url "`nOut: " out, "Debug", "Icon!"
         return false
     }
     
@@ -785,17 +737,13 @@ SafeDownload(url, out, timeoutMs := 10000) {
             FileDelete out
         }
         
-        ; Show what we're downloading
-        ToolTip "Downloading from:`n" url
-        
+        ToolTip "Downloading..."
         Download url, out
         
-        ; Wait for file with timeout
         startTime := A_TickCount
         while !FileExist(out) {
             if (A_TickCount - startTime > timeoutMs) {
                 ToolTip
-                MsgBox "Download timeout after " (timeoutMs/1000) " seconds`nURL: " url, "Timeout", "Icon!"
                 return false
             }
             Sleep 100
@@ -803,21 +751,18 @@ SafeDownload(url, out, timeoutMs := 10000) {
         
         ToolTip
         
-        ; Verify file size
         fileSize := 0
         Loop Files, out
             fileSize := A_LoopFileSize
         
         if (fileSize < 100) {
-            MsgBox "Downloaded file is too small (" fileSize " bytes)`nURL: " url, "Error", "Icon!"
             try FileDelete out
             return false
         }
         
         return true
-    } catch as err {
+    } catch {
         ToolTip
-        MsgBox "Download error: " err.Message "`nURL: " url, "Error", "Icon!"
         return false
     }
 }
@@ -856,27 +801,22 @@ ParseManifest(json) {
     }
     
     try {
-        ; Extract version
         if RegExMatch(json, '"version"\s*:\s*"([^"]+)"', &m) {
             manifest.version := m[1]
         }
         
-        ; Extract zip_url
         if RegExMatch(json, '"zip_url"\s*:\s*"([^"]+)"', &m) {
             manifest.zip_url := m[1]
         }
         
-        ; Extract launcher_version
         if RegExMatch(json, '"launcher_version"\s*:\s*"([^"]+)"', &m) {
             manifest.launcher_version := m[1]
         }
         
-        ; Extract launcher_url
         if RegExMatch(json, '"launcher_url"\s*:\s*"([^"]+)"', &m) {
             manifest.launcher_url := m[1]
         }
         
-        ; Extract changelog array
         pat := 's)"changelog"\s*:\s*\[(.*?)\]'
         if RegExMatch(json, pat, &m) {
             block := m[1]
@@ -895,7 +835,6 @@ ParseManifest(json) {
         return false
     }
     
-    ; Validate required fields
     if (!manifest.version || !manifest.zip_url) {
         return false
     }
@@ -980,7 +919,6 @@ GetCategories() {
     
     try {
         Loop Files, BASE_DIR "\*", "D" {
-            ; Skip the Icons folder
             if (StrLower(A_LoopFileName) = "icons") {
                 continue
             }
@@ -1036,7 +974,6 @@ GetGameIcon(category) {
     
     extensions := ["png", "ico", "jpg", "jpeg"]
     
-    ; Priority 1: ICON_DIR with category name
     for ext in extensions {
         iconPath := ICON_DIR "\" category "." ext
         if FileExist(iconPath) {
@@ -1044,7 +981,6 @@ GetGameIcon(category) {
         }
     }
     
-    ; Priority 2: BASE_DIR with category name (at game folder level)
     for ext in extensions {
         iconPath := BASE_DIR "\" category "." ext
         if FileExist(iconPath) {
@@ -1052,7 +988,6 @@ GetGameIcon(category) {
         }
     }
     
-    ; Priority 3: Inside category folder as "icon.ext"
     for ext in extensions {
         iconPath := BASE_DIR "\" category "\icon." ext
         if FileExist(iconPath) {
@@ -1085,7 +1020,6 @@ CreateLink(gui, label, url, x, y) {
 SafeOpenURL(url) {
     url := Trim(url)
     
-    ; Basic URL validation
     if (!InStr(url, "http://") && !InStr(url, "https://")) {
         MsgBox "Invalid URL: " url, "Error", "Icon!"
         return
@@ -1122,8 +1056,8 @@ OpenCategory(category) {
     
     win.__data := macros
     win.__cards := []
-    win.__currentSort := "Name (A-Z)"
-    win.__scrollPos := 0
+    win.__currentPage := 1
+    win.__itemsPerPage := 8
     
     gameIcon := GetGameIcon(category)
     if (gameIcon && FileExist(gameIcon)) {
@@ -1142,243 +1076,235 @@ OpenCategory(category) {
     title := win.Add("Text", "x105 y20 w500 h100 c" COLORS.text " BackgroundTrans", category)
     title.SetFont("s22 bold")
     
-    controlY := 110
+    win.__scrollY := 110
     
-    searchLabel := win.Add("Text", "x25 y" controlY " w60 c" COLORS.text, "Search:")
-    searchLabel.SetFont("s9 bold")
+    win.OnEvent("Close", (*) => win.Destroy())
     
-    searchBox := win.Add("Edit", "x85 y" (controlY - 3) " w180 h28 Background" COLORS.card " c" COLORS.text)
-    searchBox.SetFont("s10")
-    win.__searchBox := searchBox
-    searchBox.OnEvent("Change", (*) => RefreshCards(win))
+    RenderCards(win)
     
-    sortLabel := win.Add("Text", "x285 y" controlY " w40 c" COLORS.text, "Sort:")
-    sortLabel.SetFont("s9 bold")
-    
-    sortOptions := ["Name (A-Z)", "Name (Z-A)", "Creator (A-Z)", "Creator (Z-A)", "Version (High)", "Version (Low)"]
-    sortDDL := win.Add("DropDownList", "x330 y" (controlY - 4) " w145 h200 Background" COLORS.card " c" COLORS.text, sortOptions)
-    sortDDL.SetFont("s9")
-    sortDDL.Choose(1)
-    win.__sortDDL := sortDDL
-    sortDDL.OnEvent("Change", (*) => RefreshCards(win))
-    
-    filterLabel := win.Add("Text", "x495 y" controlY " w70 c" COLORS.text, "Creator:")
-    filterLabel.SetFont("s9 bold")
-    
-    creatorDDL := win.Add("DropDownList", "x565 y" (controlY - 4) " w160 h200 Background" COLORS.card " c" COLORS.text, ["All"])
-    creatorDDL.SetFont("s9")
-    win.__creatorDDL := creatorDDL
-    creatorDDL.OnEvent("Change", (*) => RefreshCards(win))
-    
-    PopulateCreatorFilter(win)
-    
-    win.__scrollY := 155
-    win.__visibleHeight := 400
-    
-    ; Initial render
-    RefreshCards(win)
-    
-    win.Show("w750 h575 Center")
+    win.Show("w750 h640 Center")
 }
 
-RefreshCards(win) {
+RenderCards(win) {
+    global COLORS
+    
     if !win.HasProp("__data") {
         return
     }
     
-    ; Get filter values
-    creator := win.HasProp("__creatorDDL") ? win.__creatorDDL.Text : "All"
-    search := win.HasProp("__searchBox") ? win.__searchBox.Value : ""
-    sortBy := win.HasProp("__sortDDL") ? win.__sortDDL.Text : "Name (A-Z)"
-    
-    ; Update current sort
-    win.__currentSort := sortBy
-    
-    ; Clear existing cards COMPLETELY
     if win.HasProp("__cards") && win.__cards.Length > 0 {
         for ctrl in win.__cards {
             try {
                 ctrl.Destroy()
             } catch {
-                ; Already destroyed
             }
         }
     }
     win.__cards := []
     
-    ; Filter - create NEW array
-    filtered := []
-    for item in win.__data {
-        creatorMatch := (creator = "All" || StrCompare(StrLower(Trim(item.info.Creator)), StrLower(Trim(creator))) = 0)
-        searchMatch := (search = "" || InStr(StrLower(item.info.Title), StrLower(search)))
-        
-        if (creatorMatch && searchMatch) {
-            filtered.Push(item)
-        }
-    }
-    
-    ; Sort ONLY if we have items
-    if (filtered.Length > 1) {
-        filtered := SortMacros(filtered, sortBy)
-    }
-    
-    ; Small delay to ensure GUI is ready
-    Sleep 50
-    
-    ; Render cards
-    RenderCards(win, filtered)
-}
-
-MakeBadge(win, title, x, y) {
-    global COLORS
-    
-    initial := SubStr(title, 1, 1)
-    iconColor := GetCategoryColor(title)
-    
-    badge := win.Add("Text", "x" x " y" y " w55 h55 Background" iconColor " Center", initial)
-    badge.SetFont("s20 bold c" COLORS.text)
-    win.__cards.Push(badge)
-}
-
-RenderCards(win, filtered) {
-    global COLORS
-    
-    if !win.HasProp("__scrollY") {
-        return
-    }
-    
+    macros := win.__data
     scrollY := win.__scrollY
     
-    if (filtered.Length = 0) {
+    if (macros.Length = 0) {
         noResult := win.Add("Text", "x25 y" scrollY " w700 h100 c" COLORS.textDim " Center", 
-            "No macros found matching your filters")
+            "No macros found")
         noResult.SetFont("s10")
         win.__cards.Push(noResult)
         return
     }
     
-    cardHeight := 85
-    cardSpacing := 12
-    yPos := scrollY
+    itemsPerPage := win.__itemsPerPage
+    currentPage := win.__currentPage
+    totalPages := Ceil(macros.Length / itemsPerPage)
     
-    ; Render each macro card
-    for index, item in filtered {
-        ; Card background
-        card := win.Add("Text", "x25 y" yPos " w700 h" cardHeight " Background" COLORS.card)
-        win.__cards.Push(card)
+    if (currentPage > totalPages) {
+        currentPage := totalPages
+        win.__currentPage := currentPage
+    }
+    
+    startIdx := ((currentPage - 1) * itemsPerPage) + 1
+    endIdx := Min(currentPage * itemsPerPage, macros.Length)
+    
+    itemsToShow := endIdx - startIdx + 1
+    
+    ; Special case: only 1 macro = full width
+    if (itemsToShow = 1) {
+        item := macros[startIdx]
+        CreateFullWidthCard(win, item, 25, scrollY, 700, 110)
+    } else {
+        ; Grid: 2 columns, 4 rows
+        cardWidth := 340
+        cardHeight := 110
+        spacing := 10
+        yPos := scrollY
         
-        ; Icon or badge
-        iconPath := GetMacroIcon(item.path)
-        hasIcon := false
+        Loop itemsToShow {
+            idx := startIdx + A_Index - 1
+            item := macros[idx]
+            
+            col := Mod(A_Index - 1, 2)
+            row := Floor((A_Index - 1) / 2)
+            
+            xPos := 25 + (col * (cardWidth + spacing))
+            yPos := scrollY + (row * (cardHeight + spacing))
+            
+            CreateGridCard(win, item, xPos, yPos, cardWidth, cardHeight)
+        }
+    }
+    
+    ; Pagination controls
+    if (macros.Length > itemsPerPage) {
+        paginationY := scrollY + 470
         
-        if (iconPath && FileExist(iconPath)) {
-            try {
-                pic := win.Add("Picture", "x40 y" (yPos + 15) " w55 h55 BackgroundTrans", iconPath)
-                win.__cards.Push(pic)
-                hasIcon := true
-            } catch {
-                ; Icon failed, will create badge below
-            }
+        pageInfo := win.Add("Text", "x25 y" paginationY " w300 c" COLORS.textDim, 
+            "Page " currentPage " of " totalPages " (" macros.Length " total)")
+        pageInfo.SetFont("s9")
+        win.__cards.Push(pageInfo)
+        
+        if (currentPage > 1) {
+            prevBtn := win.Add("Button", "x335 y" (paginationY - 5) " w90 h35 Background" COLORS.accentHover, "← Previous")
+            prevBtn.SetFont("s9")
+            prevBtn.OnEvent("Click", (*) => ChangePage(win, -1))
+            win.__cards.Push(prevBtn)
         }
         
-        ; Create badge if no icon
-        if (!hasIcon) {
-            initial := SubStr(item.info.Title, 1, 1)
-            iconColor := GetCategoryColor(item.info.Title)
-            badge := win.Add("Text", "x40 y" (yPos + 15) " w55 h55 Background" iconColor " Center", initial)
-            badge.SetFont("s20 bold c" COLORS.text)
-            win.__cards.Push(badge)
+        if (currentPage < totalPages) {
+            nextBtn := win.Add("Button", "x635 y" (paginationY - 5) " w90 h35 Background" COLORS.accentHover, "Next →")
+            nextBtn.SetFont("s9")
+            nextBtn.OnEvent("Click", (*) => ChangePage(win, 1))
+            win.__cards.Push(nextBtn)
         }
-        
-        ; Title
-        titleCtrl := win.Add("Text", "x110 y" (yPos + 15) " w440 c" COLORS.text " BackgroundTrans", item.info.Title)
-        titleCtrl.SetFont("s11 bold")
-        win.__cards.Push(titleCtrl)
-        
-        ; Creator
-        creatorCtrl := win.Add("Text", "x110 y" (yPos + 38) " w440 c" COLORS.textDim " BackgroundTrans", "by " item.info.Creator)
-        creatorCtrl.SetFont("s9")
-        win.__cards.Push(creatorCtrl)
-        
-        ; Version
-        versionCtrl := win.Add("Text", "x110 y" (yPos + 58) " w55 h20 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
-        versionCtrl.SetFont("s8 bold")
-        win.__cards.Push(versionCtrl)
-        
-        ; Run button - capture path in local scope
-        currentPath := item.path
-        runBtn := win.Add("Button", "x620 y" (yPos + 15) " w90 h30 Background" COLORS.success, "▶ Run")
-        runBtn.SetFont("s10 bold")
-        runBtn.OnEvent("Click", (*) => RunMacro(currentPath))
-        win.__cards.Push(runBtn)
-        
-        ; Links button - capture links in local scope
-        if (Trim(item.info.Links) != "") {
-            currentLinks := item.info.Links
-            linksBtn := win.Add("Button", "x620 y" (yPos + 50) " w90 h25 Background" COLORS.accentAlt, "🔗 Links")
-            linksBtn.SetFont("s9")
-            linksBtn.OnEvent("Click", (*) => OpenLinks(currentLinks))
-            win.__cards.Push(linksBtn)
-        }
-        
-        yPos += cardHeight + cardSpacing
     }
 }
 
-SortMacros(macros, sortBy) {
-    if (macros.Length = 0) {
-        return macros
-    }
+CreateFullWidthCard(win, item, x, y, w, h) {
+    global COLORS
     
-    ; Quick sort implementation for better performance
-    return QuickSort(macros, sortBy, 1, macros.Length)
-}
-
-QuickSort(arr, sortBy, low, high) {
-    if (low < high) {
-        pi := Partition(arr, sortBy, low, high)
-        QuickSort(arr, sortBy, low, pi - 1)
-        QuickSort(arr, sortBy, pi + 1, high)
-    }
-    return arr
-}
-
-Partition(arr, sortBy, low, high) {
-    pivot := arr[high]
-    i := low - 1
+    card := win.Add("Text", "x" x " y" y " w" w " h" h " Background" COLORS.card)
+    win.__cards.Push(card)
     
-    Loop high - low {
-        j := low + A_Index - 1
-        
-        shouldSwap := false
-        switch sortBy {
-            case "Name (A-Z)":
-                shouldSwap := StrCompare(StrLower(arr[j].info.Title), StrLower(pivot.info.Title)) <= 0
-            case "Name (Z-A)":
-                shouldSwap := StrCompare(StrLower(arr[j].info.Title), StrLower(pivot.info.Title)) >= 0
-            case "Creator (A-Z)":
-                shouldSwap := StrCompare(StrLower(arr[j].info.Creator), StrLower(pivot.info.Creator)) <= 0
-            case "Creator (Z-A)":
-                shouldSwap := StrCompare(StrLower(arr[j].info.Creator), StrLower(pivot.info.Creator)) >= 0
-            case "Version (High)":
-                shouldSwap := VersionCompare(arr[j].info.Version, pivot.info.Version) >= 0
-            case "Version (Low)":
-                shouldSwap := VersionCompare(arr[j].info.Version, pivot.info.Version) <= 0
-        }
-        
-        if shouldSwap {
-            i++
-            temp := arr[i]
-            arr[i] := arr[j]
-            arr[j] := temp
+    iconPath := GetMacroIcon(item.path)
+    hasIcon := false
+    
+    if (iconPath && FileExist(iconPath)) {
+        try {
+            pic := win.Add("Picture", "x" (x + 20) " y" (y + 15) " w80 h80 BackgroundTrans", iconPath)
+            win.__cards.Push(pic)
+            hasIcon := true
+        } catch {
         }
     }
     
-    temp := arr[i + 1]
-    arr[i + 1] := arr[high]
-    arr[high] := temp
+    if (!hasIcon) {
+        initial := SubStr(item.info.Title, 1, 1)
+        iconColor := GetCategoryColor(item.info.Title)
+        badge := win.Add("Text", "x" (x + 20) " y" (y + 15) " w80 h80 Background" iconColor " Center", initial)
+        badge.SetFont("s32 bold c" COLORS.text)
+        win.__cards.Push(badge)
+    }
     
-    return i + 1
+    titleCtrl := win.Add("Text", "x" (x + 120) " y" (y + 20) " w420 h100 c" COLORS.text " BackgroundTrans", item.info.Title)
+    titleCtrl.SetFont("s13 bold")
+    win.__cards.Push(titleCtrl)
+    
+    creatorCtrl := win.Add("Text", "x" (x + 120) " y" (y + 50) " w420 c" COLORS.textDim " BackgroundTrans", "by " item.info.Creator)
+    creatorCtrl.SetFont("s10")
+    win.__cards.Push(creatorCtrl)
+    
+    versionCtrl := win.Add("Text", "x" (x + 120) " y" (y + 75) " w60 h22 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
+    versionCtrl.SetFont("s9 bold")
+    win.__cards.Push(versionCtrl)
+    
+    currentPath := item.path
+    runBtn := win.Add("Button", "x" (x + w - 110) " y" (y + 20) " w100 h35 Background" COLORS.success, "▶ Run")
+    runBtn.SetFont("s11 bold")
+    runBtn.OnEvent("Click", (*) => RunMacro(currentPath))
+    win.__cards.Push(runBtn)
+    
+    if (Trim(item.info.Links) != "") {
+        currentLinks := item.info.Links
+        linksBtn := win.Add("Button", "x" (x + w - 110) " y" (y + 65) " w100 h30 Background" COLORS.accentAlt, "🔗 Links")
+        linksBtn.SetFont("s10")
+        linksBtn.OnEvent("Click", (*) => OpenLinks(currentLinks))
+        win.__cards.Push(linksBtn)
+    }
+}
+
+CreateGridCard(win, item, x, y, w, h) {
+    global COLORS
+    
+    card := win.Add("Text", "x" x " y" y " w" w " h" h " Background" COLORS.card)
+    win.__cards.Push(card)
+    
+    iconPath := GetMacroIcon(item.path)
+    hasIcon := false
+    
+    if (iconPath && FileExist(iconPath)) {
+        try {
+            pic := win.Add("Picture", "x" (x + 15) " y" (y + 15) " w60 h60 BackgroundTrans", iconPath)
+            win.__cards.Push(pic)
+            hasIcon := true
+        } catch {
+        }
+    }
+    
+    if (!hasIcon) {
+        initial := SubStr(item.info.Title, 1, 1)
+        iconColor := GetCategoryColor(item.info.Title)
+        badge := win.Add("Text", "x" (x + 15) " y" (y + 15) " w60 h60 Background" iconColor " Center", initial)
+        badge.SetFont("s24 bold c" COLORS.text)
+        win.__cards.Push(badge)
+    }
+    
+titleCtrl := win.Add(
+    "Text"
+  , "x" (x + 90)
+  . " y" (y + 15)
+  . " w" (w - 190)
+  . " h" (h + 50)
+  . " c" COLORS.text
+  . " BackgroundTrans"
+  , item.info.Title
+)
+titleCtrl.SetFont("s11 bold")
+win.__cards.Push(titleCtrl)
+    
+    creatorCtrl := win.Add("Text", "x" (x + 90) " y" (y + 40) " w" (w - 190) " c" COLORS.textDim " BackgroundTrans", "by " item.info.Creator)
+    creatorCtrl.SetFont("s9")
+    win.__cards.Push(creatorCtrl)
+    
+    versionCtrl := win.Add("Text", "x" (x + 90) " y" (y + 65) " w50 h20 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
+    versionCtrl.SetFont("s8 bold")
+    win.__cards.Push(versionCtrl)
+    
+    currentPath := item.path
+    runBtn := win.Add("Button", "x" (x + w - 90) " y" (y + 15) " w80 h30 Background" COLORS.success, "▶ Run")
+    runBtn.SetFont("s10 bold")
+    runBtn.OnEvent("Click", (*) => RunMacro(currentPath))
+    win.__cards.Push(runBtn)
+    
+    if (Trim(item.info.Links) != "") {
+        currentLinks := item.info.Links
+        linksBtn := win.Add("Button", "x" (x + w - 90) " y" (y + 55) " w80 h25 Background" COLORS.accentAlt, "🔗 Links")
+        linksBtn.SetFont("s9")
+        linksBtn.OnEvent("Click", (*) => OpenLinks(currentLinks))
+        win.__cards.Push(linksBtn)
+    }
+}
+
+ChangePage(win, direction) {
+    win.__currentPage := win.__currentPage + direction
+    
+    totalPages := Ceil(win.__data.Length / win.__itemsPerPage)
+    
+    if (win.__currentPage < 1) {
+        win.__currentPage := 1
+    }
+    if (win.__currentPage > totalPages) {
+        win.__currentPage := totalPages
+    }
+    
+    RenderCards(win)
 }
 
 GetMacroIcon(macroPath) {
@@ -1390,7 +1316,6 @@ GetMacroIcon(macroPath) {
         
         extensions := ["png", "ico", "jpg", "jpeg"]
         
-        ; Priority 1: ICON_DIR with macro name (MacroName.png)
         for ext in extensions {
             iconPath := ICON_DIR "\" macroName "." ext
             if FileExist(iconPath) {
@@ -1398,7 +1323,6 @@ GetMacroIcon(macroPath) {
             }
         }
         
-        ; Priority 2: Inside the macro folder (icon.png)
         for ext in extensions {
             iconPath := macroDir "\icon." ext
             if FileExist(iconPath) {
@@ -1406,7 +1330,6 @@ GetMacroIcon(macroPath) {
             }
         }
         
-        ; Priority 3: Game category level (GameFolder\MacroName.png)
         SplitPath macroDir, , &gameDir
         for ext in extensions {
             iconPath := gameDir "\" macroName "." ext
@@ -1459,53 +1382,6 @@ GetMacrosWithInfo(category) {
     }
     
     return out
-}
-
-PopulateCreatorFilter(win) {
-    creatorsMap := Map()
-    
-    if !win.HasProp("__data") {
-        return
-    }
-    
-    for item in win.__data {
-        c := Trim(item.info.Creator)
-        if (c != "") {
-            creatorsMap[StrLower(c)] := c
-        }
-    }
-    
-    list := ["All"]
-    for _, v in creatorsMap {
-        list.Push(v)
-    }
-    
-    if (list.Length > 2) {
-        tail := []
-        Loop list.Length - 1 {
-            tail.Push(list[A_Index + 1])
-        }
-        
-        joined := ""
-        for v in tail {
-            joined .= v "`n"
-        }
-        
-        sorted := Sort(joined)
-        list := ["All"]
-        
-        for v in StrSplit(sorted, "`n") {
-            if (Trim(v) != "") {
-                list.Push(v)
-            }
-        }
-    }
-    
-    try {
-        win.__creatorDDL.Delete()
-        win.__creatorDDL.Add(list)
-        win.__creatorDDL.Choose(1)
-    }
 }
 
 ReadMacroInfo(macroDir) {
@@ -1668,7 +1544,6 @@ CheckForLauncherUpdate() {
         return
     }
     
-    ; AUTO-UPDATE WITHOUT ASKING
     DoSelfUpdate(manifest.launcher_url, manifest.launcher_version)
 }
 
