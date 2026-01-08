@@ -225,6 +225,36 @@ CheckForUpdatesPrompt() {
         return
     }
     
+    ; Check what was extracted
+    hasMacrosFolder := false
+    hasIconsFolder := false
+    hasLooseFolders := false
+    
+    try {
+        if DirExist(extractDir "\Macros") {
+            hasMacrosFolder := true
+        }
+        if DirExist(extractDir "\icons") {
+            hasIconsFolder := true
+        }
+        
+        ; Check for loose folders (old zip structure)
+        Loop Files, extractDir "\*", "D" {
+            if (A_LoopFileName != "Macros" && A_LoopFileName != "icons") {
+                hasLooseFolders := true
+                break
+            }
+        }
+    }
+    
+    ; Determine zip structure
+    useNestedStructure := hasMacrosFolder
+    
+    if (!hasMacrosFolder && !hasLooseFolders) {
+        MsgBox "Update failed: No valid content found in zip file.", "Error", "Icon!"
+        return
+    }
+    
     ; Backup existing macros
     backupSuccess := false
     if DirExist(BASE_DIR) {
@@ -247,8 +277,18 @@ CheckForUpdatesPrompt() {
         }
         DirCreate BASE_DIR
         
-        Loop Files, extractDir "\Macros\*", "D" {
-            DirMove A_LoopFilePath, BASE_DIR "\" A_LoopFileName, 1
+        if useNestedStructure {
+            ; New structure: zip has Macros folder
+            Loop Files, extractDir "\Macros\*", "D" {
+                DirMove A_LoopFilePath, BASE_DIR "\" A_LoopFileName, 1
+            }
+        } else {
+            ; Old structure: game folders are at root
+            Loop Files, extractDir "\*", "D" {
+                if (A_LoopFileName != "icons") {
+                    DirMove A_LoopFilePath, BASE_DIR "\" A_LoopFileName, 1
+                }
+            }
         }
         installSuccess := true
     } catch as err {
@@ -304,7 +344,9 @@ CheckForUpdatesPrompt() {
             
             ; Cleanup icon backup if successful
             if iconBackupSuccess && DirExist(iconBackupDir) {
-                try DirDelete iconBackupDir, true
+                try {
+                    DirDelete iconBackupDir, true
+                }
             }
         } catch as err {
             ; Icon update failed - restore backup
@@ -914,13 +956,15 @@ CreateIconBadge(win, title, x, y, size := 55) {
 }
 
 GetMacroIcon(macroPath) {
-    global BASE_DIR
+    global BASE_DIR, ICON_DIR
     
     try {
         SplitPath macroPath, , &macroDir
+        SplitPath macroDir, &macroName
         
         extensions := ["png", "ico", "jpg", "jpeg"]
         
+        ; 1. Check inside the macro folder (icon.png)
         for ext in extensions {
             iconPath := macroDir "\icon." ext
             if FileExist(iconPath) {
@@ -928,10 +972,19 @@ GetMacroIcon(macroPath) {
             }
         }
         
-        SplitPath macroDir, &folderName
-        
+        ; 2. Check ICON_DIR with macro name (MacroName.png)
         for ext in extensions {
-            iconPath := BASE_DIR "\" folderName "." ext
+            iconPath := ICON_DIR "\" macroName "." ext
+            if FileExist(iconPath) {
+                return iconPath
+            }
+        }
+        
+        ; 3. Check game category level (GameName\MacroName.png)
+        SplitPath macroDir, , &gameDir
+        SplitPath gameDir, &gameName
+        for ext in extensions {
+            iconPath := BASE_DIR "\" gameName "\" macroName "." ext
             if FileExist(iconPath) {
                 return iconPath
             }
