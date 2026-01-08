@@ -1,12 +1,13 @@
 {
-  "version": "1.1.7",
+  "version": "1.0.0",
   "zip_url": "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/Macros.zip",
   "changelog": [
     "Fixed some more updating issues (Images)",
   ],
-  "launcher_version": "1.1.7",
+  "launcher_version": "1.0.0",
   "launcher_url": "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/AHK%20Vault.ahk"
 }
+
 
 
 
