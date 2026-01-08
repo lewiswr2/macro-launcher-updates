@@ -1,44 +1,24 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
-global LAUNCHER_VERSION := "2.0.0"
+global LAUNCHER_VERSION := "1.0.0"
 
 ; ================= CONFIG =================
 global APP_DIR      := A_AppData "\MacroLauncher"
-global BASE_DIR     := APP_DIR "\Macros"
+global BASE_DIR     := APP_DIR "\macros"
 global VERSION_FILE := APP_DIR "\version.txt"
-global ICON_DIR     := APP_DIR "\icons"
 
 global MANIFEST_URL := "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/manifest.json"
 
 global mainGui := 0
-global COLORS := {
-    bg: "0x0d1117",
-    card: "0x161b22",
-    cardHover: "0x21262d",
-    accent: "0x1f6feb",
-    accentBright: "0x58a6ff",
-    text: "0xc9d1d9",
-    textDim: "0x8b949e",
-    border: "0x30363d"
-}
 ; =========================================
 
 DirCreate APP_DIR
 DirCreate BASE_DIR
-DirCreate ICON_DIR
-SetTaskbarIcon()
 CheckForLauncherUpdate()
 CheckForUpdatesPrompt()
 CreateMainGui()
 
-SetTaskbarIcon() {
-    iconPath := ICON_DIR "\launcher.ico"
-    if !FileExist(iconPath) {
-        try TraySetIcon("shell32.dll", 3)
-    } else {
-        try TraySetIcon(iconPath)
-    }
-}
+; ================= UPDATE SYSTEM =================
 
 CheckForUpdatesPrompt() {
     global MANIFEST_URL, VERSION_FILE, BASE_DIR, APP_DIR
@@ -102,6 +82,7 @@ CheckForUpdatesPrompt() {
         return
     }
 
+    ; 🔥 DELETE OLD MACROS
     if DirExist(BASE_DIR)
         DirDelete BASE_DIR, true
     DirCreate BASE_DIR
@@ -123,6 +104,7 @@ CheckForUpdatesPrompt() {
         "Iconi"
     )
 }
+
 
 SafeDownload(url, out) {
     try {
@@ -155,121 +137,33 @@ JsonGet(json, key) {
     return ""
 }
 
-JsonGetArray(json, key) {
-    list := []
-    pat := 's)"' key '"\s*:\s*\[(.*?)\]'
-    if RegExMatch(json, pat, &m) {
-        block := m[1]
-        pos := 1
-        while RegExMatch(block, 's)"((?:\\.|[^"\\])*)"', &mm, pos) {
-            item := mm[1]
-            item := StrReplace(item, '\"', '"')
-            item := StrReplace(item, "\\", "\")
-            item := StrReplace(item, "\n", "`n")
-            item := StrReplace(item, "\r", "`r")
-            list.Push(item)
-            pos := mm.Pos + mm.Len
-        }
-    }
-    return list
-}
+; ================= MAIN GUI =================
 
 CreateMainGui() {
-    global mainGui, COLORS
+    global mainGui
 
-    mainGui := Gui("+Resize", "AHK Vault")
-    mainGui.BackColor := COLORS.bg
-    mainGui.SetFont("s10", "Segoe UI")
+mainGui := Gui(, "Macro Launcher")
+mainGui.SetFont("s14", "Segoe UI")
+    mainGui.Add("Text", "x20 y20", "Select Category")
+    ; ---- Helpful links (bottom) ----
+yBottom := 360  ; adjust if you change window height
 
-    mainGui.Add("Text", "x0 y0 w500 h60 Background" COLORS.accent)
-    mainGui.Add("Text", "x20 y15 w460 h100 c" COLORS.text " BackgroundTrans", "AHK Vault").SetFont("s18 bold")
-    
-    btnLog := mainGui.Add("Button", "x370 y18 w110 h28 Background" COLORS.accentBright, "Changelog")
-    btnLog.SetFont("s9")
-    btnLog.OnEvent("Click", ShowChangelog)
+mainGui.Add("Text", "x20 y" yBottom " cBlue ", "Discord")
+    .OnEvent("Click", (*) => Run("https://discord.gg/xVmSTVxQt9"))
 
-    mainGui.Add("Text", "x20 y75 w100 c" COLORS.text, "Games").SetFont("s11 bold")
-    
+mainGui.Add("Text", "x120 y" yBottom " cBlue ", "youtube")
+    .OnEvent("Click", (*) => Run("https://www.youtube.com/@Reversals-ux9tg"))
+
+mainGui.Add("Text", "x220 y" yBottom " cBlue ", "how-to")
+    .OnEvent("Click", (*) => Run("https://docs.google.com/document/d/1Z3_9i0TE8WTX0J5o9iwnJ1ybOJ7LFtKeuhTpcumtHXk/edit?tab=t.0"))
+btnLog := mainGui.Add("Button", "x470 y20 w120 h28", "Changelog")
+btnLog.OnEvent("Click", ShowChangelog)
+
     categories := GetCategories()
-    
-    yPos := 110
-    xPos := 20
-    cardWidth := 460
-    cardHeight := 60
+    ddl := mainGui.Add("DDL", "x20 y60 w250", categories)
+    ddl.OnEvent("Change", MainCategoryChanged)
 
-    for category in categories {
-        CreateCategoryCard(mainGui, category, xPos, yPos, cardWidth, cardHeight)
-        yPos += cardHeight + 10
-    }
-
-    bottomY := yPos + 10
-    mainGui.Add("Text", "x0 y" bottomY " w500 h1 Background" COLORS.border)
-    
-    linkY := bottomY + 12
-    CreateLink(mainGui, "Discord", "https://discord.gg/xVmSTVxQt9", 20, linkY)
-    CreateLink(mainGui, "YouTube", "https://www.youtube.com/@Reversals-ux9tg", 100, linkY)
-    CreateLink(mainGui, "Guide", "https://docs.google.com/document/d/1Z3_9i0TE8WTX0J5o9iwnJ1ybOJ7LFtKeuhTpcumtHXk/edit?tab=t.0", 190, linkY)
-
-    mainGui.Show("w500 h" (bottomY + 50) " Center")
-}
-
-CreateCategoryCard(gui, category, x, y, w, h) {
-    global COLORS
-    
-    card := gui.Add("Text", "x" x " y" y " w" w " h" h " Background" COLORS.card)
-    
-    iconPath := GetGameIcon(category)
-    iconX := x + 12
-    iconY := y + 10
-    
-    if (iconPath && FileExist(iconPath)) {
-        try {
-            gui.Add("Picture", "x" iconX " y" iconY " w40 h40", iconPath)
-        } catch {
-            CreateCategoryBadge(gui, category, iconX, iconY)
-        }
-    } else {
-        CreateCategoryBadge(gui, category, iconX, iconY)
-    }
-    
-    gui.Add("Text", "x" (x + 65) " y" (y + 18) " w" (w - 75) " c" COLORS.text " BackgroundTrans", category).SetFont("s11 bold")
-    
-    card.OnEvent("Click", (*) => OpenCategory(category))
-}
-
-CreateCategoryBadge(gui, category, x, y) {
-    global COLORS
-    initial := SubStr(category, 1, 1)
-    iconColor := GetCategoryColor(category)
-    
-    gui.Add("Text", "x" x " y" y " w40 h40 Background" iconColor " Center", initial).SetFont("s16 bold c" COLORS.text)
-}
-
-GetGameIcon(category) {
-    global ICON_DIR
-    extensions := ["ico", "png", "jpg", "jpeg"]
-    for ext in extensions {
-        iconPath := ICON_DIR "\" category "." ext
-        if FileExist(iconPath)
-            return iconPath
-    }
-    return ""
-}
-
-GetCategoryColor(category) {
-    colors := ["0x238636", "0x1f6feb", "0x8957e5", "0xda3633", "0xbc4c00", "0x1a7f37"]
-    hash := 0
-    for char in StrSplit(category)
-        hash += Ord(char)
-    return colors[Mod(hash, colors.Length) + 1]
-}
-
-CreateLink(gui, text, url, x, y) {
-    global COLORS
-    link := gui.Add("Text", "x" x " y" y " c" COLORS.accentBright, text)
-    link.SetFont("s9 underline")
-    link.OnEvent("Click", (*) => Run(url))
-    return link
+    mainGui.Show("w600 h400 Center")
 }
 
 GetCategories() {
@@ -280,154 +174,56 @@ GetCategories() {
     return list
 }
 
-OpenCategory(category) {
+MainCategoryChanged(ctrl, *) {
     global mainGui
+    category := ctrl.Text
+    if (category = "")
+        return
     mainGui.Hide()
     ShowCategoryWindow(category)
 }
 
+; ================= CATEGORY WINDOW (Filter + ListView) =================
+
 ShowCategoryWindow(category) {
-    global mainGui, COLORS
+    global mainGui
 
-    win := Gui("+Resize", category " - AHK Vault")
-    win.BackColor := COLORS.bg
-    win.SetFont("s9", "Segoe UI")
+    win := Gui("+Resize", category " Macros")
+    win.SetFont("s12")
 
-    win.Add("Text", "x0 y0 w600 h55 Background" COLORS.accent)
-    win.Add("Text", "x20 y12 c" COLORS.text " BackgroundTrans", category).SetFont("s16 bold")
-    win.Add("Text", "x20 y35 c" COLORS.textDim " BackgroundTrans", "Select a macro").SetFont("s8")
+    win.Add("Text", "x20 y15 w560 Center", category " Macros")
 
-    win.Add("Text", "x20 y70 c" COLORS.text, "Filter:")
-    creatorDDL := win.Add("DDL", "x65 y68 w150 Background" COLORS.card, ["All"])
+    win.Add("Text", "x20 y50", "Filter by creator:")
+    creatorDDL := win.Add("DDL", "x160 y46 w220", ["All"])
     creatorDDL.OnEvent("Change", CategoryFilterChanged.Bind(win, category))
 
-    searchBox := win.Add("Edit", "x235 y68 w180 Background" COLORS.card " c" COLORS.text, "")
-    searchBox.OnEvent("Change", CategorySearchChanged.Bind(win))
+    runBtn := win.Add("Button", "x400 y44 w90 h30", "Run")
+    linksBtn := win.Add("Button", "x495 y44 w85 h30", "Links")
 
-    win.__data := GetMacrosWithInfo(category)
-    win.__creatorDDL := creatorDDL
-    win.__searchBox := searchBox
-    win.__cards := []
+    ; ListView (scrolls automatically)
+    lv := win.Add("ListView", "x20 y85 w560 h260 -Multi", ["Title", "Creator", "Version"])
+    lv.ModifyCol(1, 250)
+    lv.ModifyCol(2, 170)
+    lv.ModifyCol(3, 110)
 
-    PopulateCreatorFilter(win)
-    RenderMacroCards(win, "All", "")
-
-    backBtn := win.Add("Button", "x20 y500 w560 h35 Background" COLORS.accentBright, "Back")
-    backBtn.SetFont("s10 bold")
+    backBtn := win.Add("Button", "x20 y350 w560 h35", "Back")
     backBtn.OnEvent("Click", (*) => (win.Destroy(), mainGui.Show()))
 
-    win.Show("w600 h555 Center")
-}
+    ; Store controls + macro data on the window object
+    win.__lv := lv
+    win.__creatorDDL := creatorDDL
+    win.__data := [] ; array of {path, info}
 
-RenderMacroCards(win, creatorFilter, searchText) {
-    global COLORS
-    
-    for card in win.__cards {
-        try card.Destroy()
-    }
-    win.__cards := []
+    runBtn.OnEvent("Click", CategoryRunSelected.Bind(win))
+    linksBtn.OnEvent("Click", CategoryLinksSelected.Bind(win))
+    lv.OnEvent("DoubleClick", CategoryDoubleClick.Bind(win))
 
-    yPos := 105
-    xPos := 20
-    cardWidth := 560
-    cardHeight := 75
+    ; Load data and populate filter + list
+    win.__data := GetMacrosWithInfo(category)
+    PopulateCreatorFilter(win)
+    PopulateList(win, "All")
 
-    searchLower := StrLower(searchText)
-    count := 0
-
-    for item in win.__data {
-        c := item.info.Creator
-        if (creatorFilter != "All" && StrLower(c) != StrLower(creatorFilter))
-            continue
-
-        if (searchText != "") {
-            title := StrLower(item.info.Title)
-            creator := StrLower(c)
-            if (!InStr(title, searchLower) && !InStr(creator, searchLower))
-                continue
-        }
-
-        count++
-        CreateMacroCard(win, item, xPos, yPos, cardWidth, cardHeight)
-        yPos += cardHeight + 10
-    }
-
-    if (count = 0) {
-        noResults := win.Add("Text", "x20 y105 w560 h380 c" COLORS.textDim " Center", "No macros found")
-        noResults.SetFont("s11")
-        win.__cards.Push(noResults)
-    }
-}
-
-CreateMacroCard(win, item, x, y, w, h) {
-    global COLORS
-    
-    card := win.Add("Text", "x" x " y" y " w" w " h" h " Background" COLORS.card)
-    win.__cards.Push(card)
-
-    iconPath := GetMacroIcon(item.path)
-    iconX := x + 10
-    iconY := y + 10
-    
-    if (iconPath && FileExist(iconPath)) {
-        try {
-            pic := win.Add("Picture", "x" iconX " y" iconY " w35 h35", iconPath)
-            win.__cards.Push(pic)
-        } catch {
-            CreateIconBadge(win, item.info.Title, iconX, iconY, 35)
-        }
-    } else {
-        CreateIconBadge(win, item.info.Title, iconX, iconY, 35)
-    }
-
-    title := win.Add("Text", "x" (x + 55) " y" (y + 10) " w320 c" COLORS.text " BackgroundTrans", item.info.Title)
-    title.SetFont("s10 bold")
-    win.__cards.Push(title)
-
-    creator := win.Add("Text", "x" (x + 55) " y" (y + 30) " w320 c" COLORS.textDim " BackgroundTrans", item.info.Creator)
-    creator.SetFont("s8")
-    win.__cards.Push(creator)
-
-    version := win.Add("Text", "x" (x + 55) " y" (y + 48) " w45 h18 Background" COLORS.accent " c" COLORS.text " Center", item.info.Version)
-    version.SetFont("s7")
-    win.__cards.Push(version)
-
-    runBtn := win.Add("Button", "x" (x + w - 100) " y" (y + 15) " w90 h25 Background" COLORS.accentBright, "Run")
-    runBtn.SetFont("s9 bold")
-    runBtn.OnEvent("Click", (*) => RunMacro(item.path))
-    win.__cards.Push(runBtn)
-
-    if (Trim(item.info.Links) != "") {
-        linksBtn := win.Add("Button", "x" (x + w - 100) " y" (y + 45) " w90 h20 Background" COLORS.accent, "Links")
-        linksBtn.SetFont("s8")
-        linksBtn.OnEvent("Click", (*) => OpenLinks(item.info.Links))
-        win.__cards.Push(linksBtn)
-    }
-
-    card.OnEvent("Click", (*) => RunMacro(item.path))
-}
-
-CreateIconBadge(win, title, x, y, size := 35) {
-    global COLORS
-    initial := SubStr(title, 1, 1)
-    iconColor := GetCategoryColor(title)
-    
-    fontSize := size = 35 ? "s14" : "s16"
-    badge := win.Add("Text", "x" x " y" y " w" size " h" size " Background" iconColor " Center", initial)
-    badge.SetFont(fontSize " bold c" COLORS.text)
-    win.__cards.Push(badge)
-}
-
-GetMacroIcon(macroPath) {
-    SplitPath macroPath, , &macroDir
-    
-    extensions := ["ico", "png", "jpg", "jpeg"]
-    for ext in extensions {
-        iconPath := macroDir "\icon." ext
-        if FileExist(iconPath)
-            return iconPath
-    }
-    return ""
+    win.Show("w600 h400 Center")
 }
 
 GetMacrosWithInfo(category) {
@@ -458,21 +254,15 @@ PopulateCreatorFilter(win) {
     for _, v in creatorsMap
         list.Push(v)
 
+    ; sort tail A-Z
     if (list.Length > 2) {
         tail := []
         Loop list.Length - 1
             tail.Push(list[A_Index + 1])
-        
-        joined := ""
-        for v in tail
-            joined .= v "`n"
-        sorted := Sort(joined)
-        
+        tail.Sort()
         list := ["All"]
-        for v in StrSplit(sorted, "`n") {
-            if (Trim(v) != "")
-                list.Push(v)
-        }
+        for v in tail
+            list.Push(v)
     }
 
     win.__creatorDDL.Delete()
@@ -480,29 +270,110 @@ PopulateCreatorFilter(win) {
     win.__creatorDDL.Choose(1)
 }
 
-CategoryFilterChanged(win, category, ctrl, *) {
-    RenderMacroCards(win, ctrl.Text, win.__searchBox.Value)
+PopulateList(win, creatorFilter) {
+    lv := win.__lv
+    lv.Delete()
+
+    ; reset row map each time
+    lv.__rowMap := Map()
+
+    for idx, item in win.__data {
+        c := item.info.Creator
+        if (creatorFilter != "All" && StrLower(c) != StrLower(creatorFilter))
+            continue
+
+        title := item.info.Title
+        creator := item.info.Creator
+        version := item.info.Version
+
+        row := lv.Add(, title, creator, version)
+        lv.__rowMap[row] := idx
+    }
 }
 
-CategorySearchChanged(win, ctrl, *) {
-    RenderMacroCards(win, win.__creatorDDL.Text, ctrl.Value)
+
+CategoryFilterChanged(win, category, ctrl, *) {
+    PopulateList(win, ctrl.Text)
 }
+
+GetSelectedItem(win) {
+    lv := win.__lv
+    row := lv.GetNext(0, "F") ; focused/selected row
+    if (!row)
+        return 0
+    if !IsObject(lv.__rowMap) || !lv.__rowMap.Has(row)
+        return 0
+    idx := lv.__rowMap[row]
+    return win.__data[idx]
+}
+
+CategoryRunSelected(win, *) {
+    item := GetSelectedItem(win)
+    if !item {
+        MsgBox "Select a macro first."
+        return
+    }
+    RunMacro(item.path)
+}
+
+CategoryLinksSelected(win, *) {
+    item := GetSelectedItem(win)
+    if !item {
+        MsgBox "Select a macro first."
+        return
+    }
+    if (Trim(item.info.Links) = "") {
+        MsgBox "No links set for this macro."
+        return
+    }
+    OpenLinks(item.info.Links)
+}
+
+CategoryDoubleClick(win, lvCtrl, row, *) {
+    ; double-click runs
+    item := GetSelectedItem(win)
+    if item
+        RunMacro(item.path)
+}
+
+; ================= Macro metadata (bulletproof) =================
 
 ReadMacroInfo(macroDir) {
     info := { Title: "", Creator: "", Version: "", Links: "" }
     ini := macroDir "\info.ini"
 
-    SplitPath macroDir, &folder
-    info.Title := folder
-
-    if !FileExist(ini)
+    if !FileExist(ini) {
+        SplitPath macroDir, &folder
+        info.Title := folder
         return info
+    }
 
+    ; Try IniRead [Macro] first
+    info.Title   := IniRead(ini, "Macro", "Title", "")
+    info.Creator := IniRead(ini, "Macro", "Creator", "")
+    info.Version := IniRead(ini, "Macro", "Version", "")
+    info.Links   := IniRead(ini, "Macro", "Links", "")
+
+    if (info.Title != "" || info.Creator != "" || info.Version != "" || info.Links != "")
+        return FinalizeInfo(info, macroDir)
+
+    ; Fallback text parse (supports no section)
     txt := FileRead(ini, "UTF-8")
-    
+    inMacro := false
+    sawAnySection := false
+
     for line in StrSplit(txt, "`n") {
         line := Trim(StrReplace(line, "`r"))
         if (line = "" || SubStr(line, 1, 1) = ";" || SubStr(line, 1, 1) = "#")
+            continue
+
+        if RegExMatch(line, "^\[(.+)\]$", &m) {
+            sawAnySection := true
+            inMacro := (StrLower(Trim(m[1])) = "macro")
+            continue
+        }
+
+        if (sawAnySection && !inMacro)
             continue
 
         if !InStr(line, "=")
@@ -512,19 +383,53 @@ ReadMacroInfo(macroDir) {
         k := StrLower(Trim(parts[1]))
         v := Trim(parts[2])
 
-        switch k {
-            case "title": info.Title := v
-            case "creator": info.Creator := v
-            case "version": info.Version := v
-            case "links": info.Links := v
+        if (k = "title")
+            info.Title := v
+        else if (k = "creator")
+            info.Creator := v
+        else if (k = "version")
+            info.Version := v
+        else if (k = "links")
+            info.Links := v
+    }
+
+    return FinalizeInfo(info, macroDir)
+}
+
+FinalizeInfo(info, macroDir) {
+    if (info.Title = "") {
+        SplitPath macroDir, &folder
+        info.Title := folder
+    }
+    if (info.Version = "")
+        info.Version := "-"
+    return info
+}
+JsonGetArray(json, key) {
+    list := []
+
+    ; s) = DOTALL so .*? can cross newlines
+    pat := 's)"' key '"\s*:\s*\[(.*?)\]'
+    if RegExMatch(json, pat, &m) {
+        block := m[1]
+
+        ; Extract each "string" item safely
+        pos := 1
+        while RegExMatch(block, 's)"((?:\\.|[^"\\])*)"', &mm, pos) {
+            item := mm[1]
+            ; unescape a few common sequences
+            item := StrReplace(item, '\"', '"')
+            item := StrReplace(item, "\\", "\")
+            item := StrReplace(item, "\n", "`n")
+            item := StrReplace(item, "\r", "`r")
+            list.Push(item)
+            pos := mm.Pos + mm.Len
         }
     }
 
-    if (info.Version = "")
-        info.Version := "1.0"
-
-    return info
+    return list
 }
+; ================= Actions =================
 
 RunMacro(path) {
     if !FileExist(path) {
@@ -542,32 +447,40 @@ OpenLinks(links) {
             Run url
     }
 }
-
 ShowChangelog(*) {
     global MANIFEST_URL
 
     tmpManifest := A_Temp "\manifest.json"
     if !SafeDownload(MANIFEST_URL, tmpManifest) {
-        MsgBox "Couldn't download manifest.json"
+        MsgBox "Couldn't download manifest.json (check internet / GitHub link)."
         return
     }
 
     json := FileRead(tmpManifest, "UTF-8")
     latest := JsonGet(json, "version")
+
+    ; Prefer array changelog
     changes := JsonGetArray(json, "changelog")
 
     text := ""
     if (changes.Length > 0) {
         for line in changes
             text .= "• " line "`n"
+    } else {
+        ; Fallback: allow changelog to be a string
+        s := JsonGet(json, "changelog")
+        if (s != "")
+            text := s
     }
 
     if (text = "")
-        text := "(No changelog)"
+        text := "(No changelog provided)"
 
-    MsgBox "Version: " latest "`n`n" text, "Changelog", "Iconi"
+    if (latest = "")
+        latest := "?"
+
+    MsgBox "Latest version: " latest "`n`nWhat's new:`n" text, "Changelog", "Iconi"
 }
-
 CheckForLauncherUpdate() {
     global MANIFEST_URL, LAUNCHER_VERSION
 
@@ -585,23 +498,29 @@ CheckForLauncherUpdate() {
     if VersionCompare(latestVer, LAUNCHER_VERSION) <= 0
         return
 
-    msg := "Launcher update available.`n`nCurrent: " LAUNCHER_VERSION "`nLatest: " latestVer "`n`nUpdate?"
-    if MsgBox(msg, "Update", "YesNo Iconi") = "No"
+    ; Optional: prompt user
+    msg := "A launcher update is available.`n`nCurrent: " LAUNCHER_VERSION "`nLatest: " latestVer "`n`nUpdate now?"
+    if MsgBox(msg, "Launcher Update", "YesNo Iconi") = "No"
         return
 
     DoSelfUpdate(latestUrl, latestVer)
 }
 
 DoSelfUpdate(url, newVer) {
+    ; Download new launcher script to temp
     tmpNew := A_Temp "\launcher_new.ahk"
     if !SafeDownload(url, tmpNew) {
-        MsgBox "Download failed."
+        MsgBox "Failed to download launcher update."
         return
     }
 
+    ; Current script path
     me := A_ScriptFullPath
+
+    ; Build an updater .cmd that replaces the file after we exit
     cmdPath := A_Temp "\update_launcher.cmd"
 
+    ; Note: timeout is available on most Windows. If not, ping fallback works too.
     cmd :=
     (
     '@echo off' "`r`n"
@@ -613,9 +532,13 @@ DoSelfUpdate(url, newVer) {
     'del /q "%~f0" >nul 2>nul' "`r`n"
     )
 
+    ; Write + run updater
     try FileDelete cmdPath
     FileAppend cmd, cmdPath, "UTF-8"
 
     Run '"' cmdPath '"', , "Hide"
+
+    ; Exit current instance so file can be replaced
     ExitApp
 }
+
