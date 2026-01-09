@@ -4,9 +4,7 @@
   "launcher_url": "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/MacroLauncher.ahk",
   "cred_user": "V1LnClan@discord",
   "cred_hash": "522411649",
-  "banned_discord_ids": [
-    "898236174039138304"
-  ],
+  "banned_discord_ids": [],
   "admin_discord_ids": [],
   "changelog": [
     "Added global bans",
