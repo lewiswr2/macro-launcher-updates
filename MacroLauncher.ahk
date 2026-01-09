@@ -902,7 +902,7 @@ CreateMainGui() {
     mainGui.Add("Text", "x0 y" bottomY " w550 h1 Background" COLORS.border)
     
     linkY := bottomY + 15
-    CreateLink(mainGui, "Discord", "https://discord.gg/xVmSTVxQt9", 25, linkY)
+    CreateLink(mainGui, "Discord", "https://discord.gg/v1ln", 25, linkY)
 
  
     
