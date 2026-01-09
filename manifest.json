@@ -7,9 +7,12 @@
   "banned_discord_ids": [],
   "admin_discord_ids": [],
   "changelog": [
-    "release!!!",
+    "Added global bans",
+    "Fixed login"
   ]
 }
+
+
 
 
 
