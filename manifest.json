@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "zip_url": "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/Macros.zip",
-  "launcher_url": "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/refs/main/MacroLauncher.ahk",
+  "launcher_url": "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/MacroLauncher.ahk",
   "cred_user": "V1lnCLan@discord",
   "cred_hash": "936574333",
   "banned_discord_ids": [],
