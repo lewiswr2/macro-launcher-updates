@@ -16,7 +16,7 @@ global COLORS := {
     bgLight: "0x13171d",
     card: "0x161b22",
     cardHover: "0x1c2128",
-    accent: "0x238636",
+    accent: "0x2d2386",
     accentHover: "0x2ea043",
     accentAlt: "0x1f6feb",
     text: "0xe6edf3",
@@ -55,7 +55,7 @@ EnsureVersionFile() {
 
 SetTaskbarIcon() {
     global ICON_DIR
-    iconPath := ICON_DIR "\Launcher.png"
+    iconPath := ICON_DIR "\v1ln.png"
     
     try {
         if FileExist(iconPath) {
@@ -113,7 +113,7 @@ CheckForUpdatesPrompt() {
         "Latest: " manifest.version "`n`n"
         "What's new:`n" changelogText "`n"
         "Do you want to update now?",
-        "AHK Vault Update",
+        "V1LNCLAN Update",
         "YesNo Iconi"
     )
     
@@ -845,11 +845,11 @@ ParseManifest(json) {
 CreateMainGui() {
     global mainGui, COLORS, BASE_DIR, ICON_DIR
     
-    mainGui := Gui("-Resize +Border", "AHK Vault")
+    mainGui := Gui("-Resize +Border", "V1LN AHK VAULT")
     mainGui.BackColor := COLORS.bg
     mainGui.SetFont("s10", "Segoe UI")
     
-    iconPath := ICON_DIR "\Launcher.png"
+    iconPath := ICON_DIR "\1.png"
     if FileExist(iconPath) {
         try {
             mainGui.Show("Hide")
@@ -866,7 +866,7 @@ CreateMainGui() {
         }
     }
     
-    titleText := mainGui.Add("Text", "x80 y20 w280 h100 c" COLORS.text " BackgroundTrans", "AHK Vault")
+    titleText := mainGui.Add("Text", "x80 y20 w280 h100 c" COLORS.text " BackgroundTrans", "V1LN AHK VAULT")
     titleText.SetFont("s24 bold")
     
     btnUpdate := mainGui.Add("Button", "x370 y25 w75 h35 Background" COLORS.success, "Update")
@@ -903,8 +903,8 @@ CreateMainGui() {
     
     linkY := bottomY + 15
     CreateLink(mainGui, "Discord", "https://discord.gg/xVmSTVxQt9", 25, linkY)
-    CreateLink(mainGui, "YouTube", "https://www.youtube.com/@Reversals-ux9tg", 115, linkY)
-    CreateLink(mainGui, "Guide", "https://docs.google.com/document/d/1Z3_9i0TE8WTX0J5o9iwnJ1ybOJ7LFtKeuhTpcumtHXk/edit?tab=t.0", 215, linkY)
+
+ 
     
     mainGui.Show("w550 h" (bottomY + 60) " Center")
 }
@@ -1574,7 +1574,7 @@ DoSelfUpdate(url, newVer) {
     cmd := (
         '@echo off' "`r`n"
         'chcp 65001>nul' "`r`n"
-        'echo Updating AHK Vault Launcher...' "`r`n"
+        'echo Updating V1LNCLAN Launcher...' "`r`n"
         'timeout /t 2 /nobreak >nul' "`r`n"
         'copy /y "' tmpNew '" "' me '" >nul' "`r`n"
         'if errorlevel 1 (' "`r`n"
