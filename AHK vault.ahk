@@ -1,6 +1,7 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 
+
 ; ================= GLOBAL CONFIG =================
 global MANIFEST_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/manifest"
 global WORKER_URL   := "https://tight-dust-10d2.lewisjenkins558.workers.dev"
@@ -31,6 +32,8 @@ global ADMIN_PASS := "ADMIN123"
 
 global MAX_ATTEMPTS := 3
 global LOCKOUT_FILE := A_Temp "\.lockout"
+global LAST_SEEN_CRED_HASH_FILE := CRED_DIR "\.cred_hash_seen"
+
 
 global DISCORD_WEBHOOK := "https://discord.com/api/webhooks/1459301039651164424/5vZ7DokPWu9V-qIreXKXQFdsqXaUaDTMd_zGHp19idUyvZUshczKGlvVVM7sVSC6vOkW"
 
@@ -62,6 +65,7 @@ LoadMasterKey()
 
 ; ✅ Always sync global lists/creds FIRST
 RefreshManifestAndLauncherBeforeLogin()
+SetTimer(CheckCredHashTicker, 60000) ; every 60s
 
 CheckLockout()
 EnsureDiscordId()
@@ -624,14 +628,15 @@ CreateSession(loginUser := "", role := "user") {
     } catch {
     }
 }
-
 CheckSession() {
-    global SESSION_FILE
+    global SESSION_FILE, CRED_FILE, LAST_SEEN_CRED_HASH_FILE
+
     if !FileExist(SESSION_FILE)
         return false
 
+    ; read session
     try {
-        data := FileRead(SESSION_FILE)
+        data := FileRead(SESSION_FILE, "UTF-8")
         parts := StrSplit(data, "|")
         if (parts.Length < 2)
             return false
@@ -639,18 +644,65 @@ CheckSession() {
         t := parts[1]
         mh := parts[2]
 
+        ; basic session rules
         if (DateDiff(A_Now, t, "Hours") > 24)
             return false
         if (mh != GetMachineHash())
             return false
         if IsDiscordBanned()
             return false
-
-        return true
     } catch {
         return false
     }
+
+    ; NEW: force logout if cred_hash changed since last time on THIS PC
+    currentHash := ""
+    try {
+        if FileExist(CRED_FILE) {
+            credData := FileRead(CRED_FILE, "UTF-8")
+            credParts := StrSplit(credData, "|")
+            if (credParts.Length >= 2)
+                currentHash := Trim(credParts[2])
+        }
+    } catch {
+        currentHash := ""
+    }
+
+    if (currentHash != "") {
+        seen := ""
+        try {
+            if FileExist(LAST_SEEN_CRED_HASH_FILE)
+                seen := Trim(FileRead(LAST_SEEN_CRED_HASH_FILE, "UTF-8"))
+        } catch {
+            seen := ""
+        }
+
+        ; first run: record hash
+        if (seen = "") {
+            try {
+                if FileExist(LAST_SEEN_CRED_HASH_FILE)
+                    FileDelete LAST_SEEN_CRED_HASH_FILE
+                FileAppend currentHash, LAST_SEEN_CRED_HASH_FILE
+                Run 'attrib +h "' LAST_SEEN_CRED_HASH_FILE '"', , "Hide"
+            } catch {
+            }
+        } else if (seen != currentHash) {
+            ; hash changed -> log out
+            try FileDelete SESSION_FILE
+            try {
+                if FileExist(LAST_SEEN_CRED_HASH_FILE)
+                    FileDelete LAST_SEEN_CRED_HASH_FILE
+                FileAppend currentHash, LAST_SEEN_CRED_HASH_FILE
+                Run 'attrib +h "' LAST_SEEN_CRED_HASH_FILE '"', , "Hide"
+            } catch {
+            }
+            return false
+        }
+    }
+
+    return true
 }
+
 
 ClearSession() {
     global SESSION_FILE
@@ -1281,4 +1333,19 @@ TestSync() {
         . "`nAdmin file exists: " (FileExist(ADMIN_DISCORD_FILE) ? "YES" : "NO")
         . "`n`nBan file path:`n" DISCORD_BAN_FILE
         . "`n`nAdmin file path:`n" ADMIN_DISCORD_FILE
+}
+CheckCredHashTicker() {
+    global SESSION_FILE
+    ; only care if someone is logged in
+    if !FileExist(SESSION_FILE)
+        return
+
+    ; refresh manifest + creds
+    if !RefreshManifestAndLauncherBeforeLogin()
+        return
+
+    ; now re-check session validity (will delete session if hash changed)
+    if !CheckSession() {
+        MsgBox "⚠️ Your session was ended because the universal password changed.", "AHK vault", "Icon! 0x30"
+    }
 }
