@@ -69,317 +69,221 @@ SetTaskbarIcon() {
 
 CheckForUpdatesPrompt() {
     global MANIFEST_URL, VERSION_FILE, BASE_DIR, APP_DIR, ICON_DIR
-    
+
     tmpManifest := A_Temp "\manifest.json"
     tmpZip := A_Temp "\Macros.zip"
     extractDir := A_Temp "\macro_extract"
     backupDir := A_Temp "\macro_backup_" A_Now
-    
+
     if !SafeDownload(MANIFEST_URL, tmpManifest) {
         return
     }
-    
-    json := ""
-    try {
-        json := FileRead(tmpManifest, "UTF-8")
-    } catch {
+
+    try json := FileRead(tmpManifest, "UTF-8")
+    catch {
         return
     }
-    
+
     manifest := ParseManifest(json)
-    if !manifest {
+    if !manifest
         return
-    }
-    
+
     current := "0"
     try {
-        if FileExist(VERSION_FILE) {
+        if FileExist(VERSION_FILE)
             current := Trim(FileRead(VERSION_FILE))
-        }
     }
-    
-    if VersionCompare(manifest.version, current) <= 0 {
+
+    if VersionCompare(manifest.version, current) <= 0
         return
-    }
-    
+
     changelogText := ""
-    for line in manifest.changelog {
+    for line in manifest.changelog
         changelogText .= "• " line "`n"
-    }
-    
+
     choice := MsgBox(
         "Update available!`n`n"
-        "Current: " current "`n"
-        "Latest: " manifest.version "`n`n"
-        "What's new:`n" changelogText "`n"
-        "Do you want to update now?",
+        . "Current: " current "`n"
+        . "Latest: " manifest.version "`n`n"
+        . "What's new:`n" changelogText "`n"
+        . "Do you want to update now?",
         "V1LNCLAN Update",
         "YesNo Iconi"
     )
-    
-    if (choice = "No") {
+    if (choice = "No")
         return
-    }
-    
+
+    ; ---- download zip with retry ----
     downloadSuccess := false
     attempts := 0
     maxAttempts := 3
-    
+
     while (!downloadSuccess && attempts < maxAttempts) {
         attempts++
-        
-        if SafeDownload(manifest.zip_url, tmpZip, 30000) {
-            try {
-                fileSize := 0
-                Loop Files, tmpZip
-                    fileSize := A_LoopFileSize
-                
-                if (fileSize >= 100) {
-                    downloadSuccess := true
-                } else {
-                    try FileDelete tmpZip
-                    if (attempts < maxAttempts) {
-                        Sleep 1000
-                    }
-                }
-            } catch {
-                if (attempts < maxAttempts) {
-                    Sleep 1000
-                }
-            }
+        if SafeDownload(manifest.zip_url, tmpZip, 30000) && IsValidZip(tmpZip) {
+            downloadSuccess := true
+        } else {
+            try if FileExist(tmpZip) FileDelete tmpZip
+            if (attempts < maxAttempts)
+                Sleep 1000
         }
     }
-    
+
     if !downloadSuccess {
         MsgBox(
-            "Failed to download update after " maxAttempts " attempts.`n`n"
-            "Please check your internet connection and try again later.`n`n"
-            "Zip URL: " manifest.zip_url,
+            "Failed to download a valid ZIP after " maxAttempts " attempts.`n`n"
+            . "Zip URL:`n" manifest.zip_url,
             "Download Failed",
             "Icon!"
         )
         return
     }
-    
+
+    ; ---- prep extract dir ----
     try {
-        if DirExist(extractDir) {
+        if DirExist(extractDir)
             DirDelete extractDir, true
-        }
         DirCreate extractDir
     } catch as err {
-        MsgBox "Failed to create extraction directory: " err.Message, "Error", "Icon!"
+        ShowUpdateFail("Create extraction directory", err, "extractDir=`n" extractDir)
         return
     }
-    
+
+    ; ---- extract (KEEP github extraction: tar then powershell) ----
     extractSuccess := false
     try {
         RunWait 'tar -xf "' tmpZip '" -C "' extractDir '"', , "Hide"
-        
-        hasContent := false
-        try {
-            Loop Files, extractDir "\*", "D" {
-                hasContent := true
-                break
-            }
-        }
-        extractSuccess := hasContent
+        extractSuccess := DirExist(extractDir) && HasAnyFolders(extractDir)
     } catch {
+        extractSuccess := false
     }
-    
+
     if !extractSuccess {
         try {
             psCmd := 'powershell -Command "Expand-Archive -Path `"' tmpZip '`" -DestinationPath `"' extractDir '`" -Force"'
             RunWait psCmd, , "Hide"
-            
-            hasContent := false
-            try {
-                Loop Files, extractDir "\*", "D" {
-                    hasContent := true
-                    break
-                }
-            }
-            extractSuccess := hasContent
-        } catch {
-            MsgBox(
-                "Failed to extract update archive.`n`n"
-                "Both tar and PowerShell extraction methods failed.`n"
-                "Please extract the update manually or reinstall the launcher.",
-                "Extraction Failed",
-                "Icon!"
-            )
+            extractSuccess := DirExist(extractDir) && HasAnyFolders(extractDir)
+        } catch as err {
+            ShowUpdateFail("Extraction (tar + PowerShell)", err, "zip=`n" tmpZip "`nextractDir=`n" extractDir)
             return
         }
     }
-    
+
     if !extractSuccess {
         MsgBox "Update failed: extraction produced no folders.", "Error", "Icon!"
         return
     }
-    
-    hasMacrosFolder := false
-    hasIconsFolder := false
-    hasLooseFolders := false
-    
-    try {
-        if DirExist(extractDir "\Macros") {
-            hasMacrosFolder := true
-        }
-        if DirExist(extractDir "\icons") {
-            hasIconsFolder := true
-        }
-        
-        Loop Files, extractDir "\*", "D" {
-            if (A_LoopFileName != "Macros" && A_LoopFileName != "icons") {
-                hasLooseFolders := true
-                break
-            }
-        }
-    }
-    
+
+    ; ---- detect structure ----
+    hasMacrosFolder := DirExist(extractDir "\Macros")
+    hasIconsFolder := DirExist(extractDir "\icons")
+    hasLooseFolders := HasAnyFolders(extractDir)
+
     useNestedStructure := hasMacrosFolder
-    
     if (!hasMacrosFolder && !hasLooseFolders) {
         MsgBox "Update failed: No valid content found in zip file.", "Error", "Icon!"
         return
     }
-    
+
+    ; ---- backup ----
     backupSuccess := false
     if DirExist(BASE_DIR) {
         try {
             DirCreate backupDir
-            Loop Files, BASE_DIR "\*", "D" {
-                DirMove A_LoopFilePath, backupDir "\" A_LoopFileName, 1
-            }
+            Loop Files, BASE_DIR "\*", "D"
+                TryDirMove(A_LoopFilePath, backupDir "\" A_LoopFileName, true)
             backupSuccess := true
-        } catch {
+        } catch as err {
+            ; backup failing shouldn't hard-stop; we can still try install
+            backupSuccess := false
         }
     }
-    
-    installSuccess := false
+
+    ; ---- install (this is where members usually fail; now it will show why) ----
     try {
-        if DirExist(BASE_DIR) {
+        if DirExist(BASE_DIR)
             DirDelete BASE_DIR, true
-        }
         DirCreate BASE_DIR
-        
+
         if useNestedStructure {
-            Loop Files, extractDir "\Macros\*", "D" {
-                DirMove A_LoopFilePath, BASE_DIR "\" A_LoopFileName, 1
-            }
+            Loop Files, extractDir "\Macros\*", "D"
+                TryDirMove(A_LoopFilePath, BASE_DIR "\" A_LoopFileName, true)
         } else {
             Loop Files, extractDir "\*", "D" {
-                if (A_LoopFileName != "icons") {
-                    DirMove A_LoopFilePath, BASE_DIR "\" A_LoopFileName, 1
-                }
+                if (A_LoopFileName != "icons")
+                    TryDirMove(A_LoopFilePath, BASE_DIR "\" A_LoopFileName, true)
             }
         }
-        installSuccess := true
     } catch as err {
-        MsgBox "Failed to install macro update: " err.Message, "Error", "Icon!"
-        
-        if backupSuccess {
-            try {
-                if DirExist(BASE_DIR) {
+        ; rollback
+        try {
+            if backupSuccess {
+                if DirExist(BASE_DIR)
                     DirDelete BASE_DIR, true
-                }
                 DirCreate BASE_DIR
-                
-                Loop Files, backupDir "\*", "D" {
-                    DirMove A_LoopFilePath, BASE_DIR "\" A_LoopFileName, 1
-                }
-                MsgBox "Update failed but your macros were restored from backup.", "Restored", "Iconi"
-            } catch {
-                MsgBox(
-                    "Critical error: Update failed and rollback failed.`n`n"
-                    "Backup location:`n" backupDir,
-                    "Critical Error",
-                    "Icon!"
-                )
+                Loop Files, backupDir "\*", "D"
+                    TryDirMove(A_LoopFilePath, BASE_DIR "\" A_LoopFileName, true)
             }
+        } catch {
         }
+
+        ShowUpdateFail(
+            "Install / move folders",
+            err,
+            "BASE_DIR=`n" BASE_DIR "`n`nextractDir=`n" extractDir "`n`nTip: close MacroLauncher & disable Controlled Folder Access/AV if blocking AppData."
+        )
         return
     }
-    
+
+    ; ---- icons ----
     iconsUpdated := false
-    iconBackupDir := A_Temp "\icon_backup_" A_Now
-    iconBackupSuccess := false
-    
-    if DirExist(extractDir "\icons") {
+    if hasIconsFolder {
         try {
-            if DirExist(ICON_DIR) {
-                DirCreate iconBackupDir
-                Loop Files, ICON_DIR "\*.*" {
-                    FileCopy A_LoopFilePath, iconBackupDir "\" A_LoopFileName, 1
-                }
-                iconBackupSuccess := true
-            }
-        }
-        
-        try {
-            if !DirExist(ICON_DIR) {
+            if !DirExist(ICON_DIR)
                 DirCreate ICON_DIR
-            }
-        }
-        
-        try {
-            iconCount := 0
-            Loop Files, extractDir "\icons\*.*" {
-                FileCopy A_LoopFilePath, ICON_DIR "\" A_LoopFileName, 1
-                iconCount++
-            }
-            
-            if (iconCount > 0) {
+            Loop Files, extractDir "\icons\*.*", "F" {
+                TryFileCopy(A_LoopFilePath, ICON_DIR "\" A_LoopFileName, true)
                 iconsUpdated := true
             }
-            
-            if iconBackupSuccess && DirExist(iconBackupDir) {
-                try {
-                    DirDelete iconBackupDir, true
-                }
-            }
         } catch as err {
-            if iconBackupSuccess {
-                try {
-                    Loop Files, iconBackupDir "\*.*" {
-                        FileCopy A_LoopFilePath, ICON_DIR "\" A_LoopFileName, 1
-                    }
-                }
-            }
+            ; icon failure shouldn't kill the entire update, but we can show it
+            ShowUpdateFail("Copy icons", err, "ICON_DIR=`n" ICON_DIR)
         }
     }
-    
-    if installSuccess && backupSuccess {
-        try {
-            if DirExist(backupDir) {
-                DirDelete backupDir, true
-            }
-        }
-    }
-    
+
+    ; ---- version file ----
     try {
-        if FileExist(VERSION_FILE) {
+        if FileExist(VERSION_FILE)
             FileDelete VERSION_FILE
-        }
         FileAppend manifest.version, VERSION_FILE
         RunWait 'attrib +h +s "' APP_DIR '"', , "Hide"
+    } catch as err {
+        ShowUpdateFail("Write version file", err, "VERSION_FILE=`n" VERSION_FILE)
     }
-    
+
+    ; ---- cleanup ----
     try {
-        if FileExist(tmpZip) {
+        if FileExist(tmpZip)
             FileDelete tmpZip
-        }
-        if DirExist(extractDir) {
+        if DirExist(extractDir)
             DirDelete extractDir, true
-        }
+    } catch {
     }
-    
+
     updateMsg := "Update complete!`n`nVersion " manifest.version " installed.`n`n"
-    if iconsUpdated {
+    if iconsUpdated
         updateMsg .= "✓ Icons updated`n"
-    }
     updateMsg .= "`nChanges:`n" changelogText
-    
-    MsgBox(updateMsg, "Update Finished", "Iconi")
+
+    MsgBox updateMsg, "Update Finished", "Iconi"
+}
+
+HasAnyFolders(dir) {
+    try {
+        Loop Files, dir "\*", "D"
+            return true
+    }
+    return false
 }
 
 ManualUpdate(*) {
@@ -1599,5 +1503,115 @@ DoSelfUpdate(url, newVer) {
         ExitApp
     } catch as err {
         MsgBox "Update failed: " err.Message, "Error", "Icon!"
+    }
+}
+
+ExtractZipShell(zipPath, destDir) {
+    try {
+        if DirExist(destDir)
+            DirDelete destDir, true
+        DirCreate destDir
+
+        shell := ComObject("Shell.Application")
+        zip := shell.NameSpace(zipPath)
+        if !zip
+            throw Error("Shell.NameSpace(zip) failed. Not a readable ZIP path.")
+
+        dest := shell.NameSpace(destDir)
+        if !dest
+            throw Error("Shell.NameSpace(dest) failed.")
+
+        ; 16 = Yes to all overwrite prompts
+        dest.CopyHere(zip.Items(), 16)
+
+        ; wait for extraction to finish (simple heuristic)
+        t0 := A_TickCount
+        Loop 60 {
+            if HasAnyFileOrFolder(destDir)
+                break
+            Sleep 250
+        }
+        if !HasAnyFileOrFolder(destDir)
+            throw Error("Extraction produced no files/folders (timeout).")
+
+        return true
+    } catch as err {
+        MsgBox "❌ EXTRACTION FAILED:`n" err.Message, "Update", "Icon! 0x10"
+        return false
+    }
+}
+
+HasAnyFileOrFolder(dir) {
+    try {
+        Loop Files, dir "\*", "FD"
+            return true
+    }
+    return false
+}
+
+TryDirMove(src, dst, overwrite := true, retries := 10) {
+    loop retries {
+        try {
+            DirMove src, dst, overwrite ? 1 : 0
+            return true
+        } catch as err {
+            Sleep 250
+            if (A_Index = retries)
+                throw Error("DirMove failed:`n" err.Message "`n`nFrom:`n" src "`nTo:`n" dst)
+        }
+    }
+    return false
+}
+
+TryFileCopy(src, dst, overwrite := true, retries := 10) {
+    loop retries {
+        try {
+            FileCopy src, dst, overwrite ? 1 : 0
+            return true
+        } catch as err {
+            Sleep 250
+            if (A_Index = retries)
+                throw Error("FileCopy failed:`n" err.Message "`n`nFrom:`n" src "`nTo:`n" dst)
+        }
+    }
+    return false
+}
+
+FindTopFolder(extractDir) {
+    ; If zip extracts as one top folder (common with GitHub zips), return it
+    folders := []
+    try {
+        Loop Files, extractDir "\*", "D"
+            folders.Push(A_LoopFilePath)
+    }
+    if (folders.Length = 1)
+        return folders[1]
+    return extractDir
+}
+ShowUpdateFail(context, err, extra := "") {
+    msg := "❌ Failed to install macro updates`n`n"
+        . "Step: " context "`n"
+        . "Error: " err.Message "`n`n"
+        . "Extra: " extra "`n`n"
+        . "A_LastError: " A_LastError "`n"
+        . "A_WorkingDir: " A_WorkingDir "`n"
+        . "AppData: " A_AppData
+
+    MsgBox msg, "v1ln clan - Update Failed", "Icon! 0x10"
+}
+IsValidZip(path) {
+    try {
+        if !FileExist(path)
+            return false
+        if (FileGetSize(path) < 100)
+            return false
+
+        f := FileOpen(path, "r")
+        sig := f.Read(2)
+        f.Close()
+
+        return (sig = "PK")
+    } catch {
+        return false
     }
 }
