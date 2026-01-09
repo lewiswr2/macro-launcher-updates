@@ -4,56 +4,12 @@
   "launcher_url": "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/MacroLauncher.ahk",
   "cred_user": "ahkvault@discord",
   "cred_hash": "123456789",
-  "banned_discord_ids": [],
+  "banned_discord_ids": [
+    "898236174039138304"
+  ],
   "admin_discord_ids": [],
   "changelog": [
     "Added global bans",
     "Fixed login"
   ]
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
