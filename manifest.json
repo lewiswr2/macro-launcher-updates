@@ -3,14 +3,15 @@
 "zip_url": "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/Macros.zip",
    "launcher_url": "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/AHK%20Vault.ahk",
 
-  "cred_user": "ahkvault@discord",
-  "cred_hash": "123456789",
+"cred_user": "ahkvault@discord",
+"cred_hash": "972684626"
 
   "changelog": [
     "Updated macros",
     "Security improvements"
   ]
 }
+
 
 
 
