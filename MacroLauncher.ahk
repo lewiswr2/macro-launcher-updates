@@ -1,4 +1,4 @@
-#Requires AutoHotkey v2.0
+﻿#Requires AutoHotkey v2.0
 #SingleInstance Force
 
 global LAUNCHER_VERSION := "2.0.4"
@@ -8,7 +8,7 @@ global APP_DIR := A_AppData "\MacroLauncher"
 global BASE_DIR := APP_DIR "\Macros"
 global VERSION_FILE := APP_DIR "\version.txt"
 global ICON_DIR := BASE_DIR "\Icons"
-global MANIFEST_URL := "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/manifest.json"
+global MANIFEST_URL := "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/refs/main/manifest.json"
 global mainGui := 0
 
 global COLORS := {
@@ -55,7 +55,7 @@ EnsureVersionFile() {
 
 SetTaskbarIcon() {
     global ICON_DIR
-    iconPath := ICON_DIR "\v1ln.png"
+    iconPath := ICON_DIR "\AHK.png"
     
     try {
         if FileExist(iconPath) {
@@ -107,7 +107,7 @@ CheckForUpdatesPrompt() {
         . "Latest: " manifest.version "`n`n"
         . "What's new:`n" changelogText "`n"
         . "Do you want to update now?",
-        "V1LNCLAN Update",
+        "AHK vault Update",
         "YesNo Iconi"
     )
     if (choice = "No")
@@ -749,7 +749,7 @@ ParseManifest(json) {
 CreateMainGui() {
     global mainGui, COLORS, BASE_DIR, ICON_DIR
     
-    mainGui := Gui("-Resize +Border", "V1LN AHK VAULT")
+    mainGui := Gui("-Resize +Border", " AHK VAULT")
     mainGui.BackColor := COLORS.bg
     mainGui.SetFont("s10", "Segoe UI")
     
@@ -770,7 +770,7 @@ CreateMainGui() {
         }
     }
     
-    titleText := mainGui.Add("Text", "x80 y20 w280 h100 c" COLORS.text " BackgroundTrans", "V1LN AHK VAULT")
+    titleText := mainGui.Add("Text", "x80 y20 w280 h100 c" COLORS.text " BackgroundTrans", " AHK VAULT")
     titleText.SetFont("s24 bold")
     
     btnUpdate := mainGui.Add("Button", "x370 y25 w75 h35 Background" COLORS.success, "Update")
@@ -806,7 +806,7 @@ CreateMainGui() {
     mainGui.Add("Text", "x0 y" bottomY " w550 h1 Background" COLORS.border)
     
     linkY := bottomY + 15
-    CreateLink(mainGui, "Discord", "https://discord.gg/v1ln", 25, linkY)
+    CreateLink(mainGui, "Discord", "https://discord.gg/PQ85S32Ht8", 25, linkY)
 
  
     
@@ -1478,7 +1478,7 @@ DoSelfUpdate(url, newVer) {
     cmd := (
         '@echo off' "`r`n"
         'chcp 65001>nul' "`r`n"
-        'echo Updating V1LNCLAN Launcher...' "`r`n"
+        'echo Updating AHK vault Launcher...' "`r`n"
         'timeout /t 2 /nobreak >nul' "`r`n"
         'copy /y "' tmpNew '" "' me '" >nul' "`r`n"
         'if errorlevel 1 (' "`r`n"
@@ -1597,7 +1597,7 @@ ShowUpdateFail(context, err, extra := "") {
         . "A_WorkingDir: " A_WorkingDir "`n"
         . "AppData: " A_AppData
 
-    MsgBox msg, "v1ln clan - Update Failed", "Icon! 0x10"
+    MsgBox msg, "AHK vault - Update Failed", "Icon! 0x10"
 }
 IsValidZip(path) {
     try {
@@ -1615,3 +1615,5 @@ IsValidZip(path) {
         return false
     }
 }
+
+
