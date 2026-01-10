@@ -8,7 +8,7 @@ global APP_DIR := A_AppData "\MacroLauncher"
 global BASE_DIR := APP_DIR "\Macros"
 global VERSION_FILE := APP_DIR "\version.txt"
 global ICON_DIR := BASE_DIR "\Icons"
-global MANIFEST_URL := "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/refs/main/manifest.json"
+global MANIFEST_URL := "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/manifest.json"
 global mainGui := 0
 
 global COLORS := {
