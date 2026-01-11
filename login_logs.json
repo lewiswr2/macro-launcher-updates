@@ -1,2 +1,13 @@
-"logs": [
-] 
+{
+  "logs": [
+    {
+      "t": "2026-01-11 00:35:10",
+      "pc": "LEWIS",
+      "user": "Lewis",
+      "discordId": "1247055057489231914",
+      "hwid": "1525703921",
+      "role": "user",
+      "loginUser": "V1LnClan@discord"
+    }
+  ]
+}
