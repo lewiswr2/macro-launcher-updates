@@ -1,7 +1,7 @@
-﻿#Requires AutoHotkey v2.0
+#Requires AutoHotkey v2.0
 #SingleInstance Force
 
-global LAUNCHER_VERSION := "2.0.4"
+global LAUNCHER_VERSION := "2.0.5"
 
 ; ================= CONFIG =================
 global APP_DIR := A_AppData "\MacroLauncher"
@@ -16,8 +16,8 @@ global COLORS := {
     bgLight: "0x13171d",
     card: "0x161b22",
     cardHover: "0x1c2128",
-    accent: "0x2d2386",
-    accentHover: "0x2ea043",
+    accent: "0x006eff",
+    accentHover: "0x0011ff",
     accentAlt: "0x1f6feb",
     text: "0xe6edf3",
     textDim: "0x7d8590",
@@ -55,7 +55,7 @@ EnsureVersionFile() {
 
 SetTaskbarIcon() {
     global ICON_DIR
-    iconPath := ICON_DIR "\AHK.png"
+    iconPath := ICON_DIR "\launcher.png"
     
     try {
         if FileExist(iconPath) {
@@ -107,13 +107,12 @@ CheckForUpdatesPrompt() {
         . "Latest: " manifest.version "`n`n"
         . "What's new:`n" changelogText "`n"
         . "Do you want to update now?",
-        "AHK vault Update",
+        "V1LN clan Update",
         "YesNo Iconi"
     )
     if (choice = "No")
         return
 
-    ; ---- download zip with retry ----
     downloadSuccess := false
     attempts := 0
     maxAttempts := 3
@@ -123,7 +122,7 @@ CheckForUpdatesPrompt() {
         if SafeDownload(manifest.zip_url, tmpZip, 30000) && IsValidZip(tmpZip) {
             downloadSuccess := true
         } else {
-            try if FileExist(tmpZip) FileDelete tmpZip
+            try if FileExist(tmpZip) FileDelete(tmpZip)
             if (attempts < maxAttempts)
                 Sleep 1000
         }
@@ -139,7 +138,6 @@ CheckForUpdatesPrompt() {
         return
     }
 
-    ; ---- prep extract dir ----
     try {
         if DirExist(extractDir)
             DirDelete extractDir, true
@@ -149,7 +147,6 @@ CheckForUpdatesPrompt() {
         return
     }
 
-    ; ---- extract (KEEP github extraction: tar then powershell) ----
     extractSuccess := false
     try {
         RunWait 'tar -xf "' tmpZip '" -C "' extractDir '"', , "Hide"
@@ -174,7 +171,6 @@ CheckForUpdatesPrompt() {
         return
     }
 
-    ; ---- detect structure ----
     hasMacrosFolder := DirExist(extractDir "\Macros")
     hasIconsFolder := DirExist(extractDir "\icons")
     hasLooseFolders := HasAnyFolders(extractDir)
@@ -185,7 +181,6 @@ CheckForUpdatesPrompt() {
         return
     }
 
-    ; ---- backup ----
     backupSuccess := false
     if DirExist(BASE_DIR) {
         try {
@@ -194,12 +189,10 @@ CheckForUpdatesPrompt() {
                 TryDirMove(A_LoopFilePath, backupDir "\" A_LoopFileName, true)
             backupSuccess := true
         } catch as err {
-            ; backup failing shouldn't hard-stop; we can still try install
             backupSuccess := false
         }
     }
 
-    ; ---- install (this is where members usually fail; now it will show why) ----
     try {
         if DirExist(BASE_DIR)
             DirDelete BASE_DIR, true
@@ -215,7 +208,6 @@ CheckForUpdatesPrompt() {
             }
         }
     } catch as err {
-        ; rollback
         try {
             if backupSuccess {
                 if DirExist(BASE_DIR)
@@ -235,7 +227,6 @@ CheckForUpdatesPrompt() {
         return
     }
 
-    ; ---- icons ----
     iconsUpdated := false
     if hasIconsFolder {
         try {
@@ -246,12 +237,10 @@ CheckForUpdatesPrompt() {
                 iconsUpdated := true
             }
         } catch as err {
-            ; icon failure shouldn't kill the entire update, but we can show it
             ShowUpdateFail("Copy icons", err, "ICON_DIR=`n" ICON_DIR)
         }
     }
 
-    ; ---- version file ----
     try {
         if FileExist(VERSION_FILE)
             FileDelete VERSION_FILE
@@ -261,7 +250,6 @@ CheckForUpdatesPrompt() {
         ShowUpdateFail("Write version file", err, "VERSION_FILE=`n" VERSION_FILE)
     }
 
-    ; ---- cleanup ----
     try {
         if FileExist(tmpZip)
             FileDelete tmpZip
@@ -300,6 +288,13 @@ ManualUpdate(*) {
         return
     }
     
+    ; 🔥 DELETE VERSION FILE BEFORE CHECKING
+    try {
+        if FileExist(VERSION_FILE)
+            FileDelete VERSION_FILE
+    } catch {
+    }
+    
     tmpManifest := A_Temp "\manifest.json"
     tmpZip := A_Temp "\Macros.zip"
     extractDir := A_Temp "\macro_extract"
@@ -330,23 +325,6 @@ ManualUpdate(*) {
         return
     }
     
-    current := "0"
-    try {
-        if FileExist(VERSION_FILE) {
-            current := Trim(FileRead(VERSION_FILE))
-        }
-    }
-    
-    if VersionCompare(manifest.version, current) <= 0 {
-        MsgBox(
-            "You already have the latest version!`n`n"
-            "Current version: " current,
-            "Up to Date",
-            "Iconi"
-        )
-        return
-    }
-    
     changelogText := ""
     for line in manifest.changelog {
         changelogText .= "• " line "`n"
@@ -354,7 +332,6 @@ ManualUpdate(*) {
     
     choice := MsgBox(
         "Update available!`n`n"
-        "Current: " current "`n"
         "Latest: " manifest.version "`n`n"
         "What's new:`n" changelogText "`n"
         "Download and install now?",
@@ -749,7 +726,7 @@ ParseManifest(json) {
 CreateMainGui() {
     global mainGui, COLORS, BASE_DIR, ICON_DIR
     
-    mainGui := Gui("-Resize +Border", " AHK VAULT")
+    mainGui := Gui("-Resize +Border", " V1LN clan")
     mainGui.BackColor := COLORS.bg
     mainGui.SetFont("s10", "Segoe UI")
     
@@ -770,7 +747,7 @@ CreateMainGui() {
         }
     }
     
-    titleText := mainGui.Add("Text", "x80 y20 w280 h100 c" COLORS.text " BackgroundTrans", " AHK VAULT")
+    titleText := mainGui.Add("Text", "x80 y20 w280 h100 c" COLORS.text " BackgroundTrans", " V1LN clan")
     titleText.SetFont("s24 bold")
     
     btnUpdate := mainGui.Add("Button", "x370 y25 w75 h35 Background" COLORS.success, "Update")
@@ -806,9 +783,7 @@ CreateMainGui() {
     mainGui.Add("Text", "x0 y" bottomY " w550 h1 Background" COLORS.border)
     
     linkY := bottomY + 15
-    CreateLink(mainGui, "Discord", "https://discord.gg/PQ85S32Ht8", 25, linkY)
-
- 
+    CreateLink(mainGui, "Discord", "https://discord.gg/v1ln", 25, linkY)
     
     mainGui.Show("w550 h" (bottomY + 60) " Center")
 }
@@ -1478,7 +1453,7 @@ DoSelfUpdate(url, newVer) {
     cmd := (
         '@echo off' "`r`n"
         'chcp 65001>nul' "`r`n"
-        'echo Updating AHK vault Launcher...' "`r`n"
+        'echo Updating V1LN clan Launcher...' "`r`n"
         'timeout /t 2 /nobreak >nul' "`r`n"
         'copy /y "' tmpNew '" "' me '" >nul' "`r`n"
         'if errorlevel 1 (' "`r`n"
@@ -1597,7 +1572,7 @@ ShowUpdateFail(context, err, extra := "") {
         . "A_WorkingDir: " A_WorkingDir "`n"
         . "AppData: " A_AppData
 
-    MsgBox msg, "AHK vault - Update Failed", "Icon! 0x10"
+    MsgBox msg, "V1LN clan - Update Failed", "Icon! 0x10"
 }
 IsValidZip(path) {
     try {
@@ -1615,5 +1590,3 @@ IsValidZip(path) {
         return false
     }
 }
-
-
