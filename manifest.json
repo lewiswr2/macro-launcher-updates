@@ -9,7 +9,9 @@
   "cred_hash": "1105182512",
   "banned_discord_ids": [],
   "admin_discord_ids": [],
-  "banned_hwids": [],
+  "banned_hwids": [
+    "152570392"
+  ],
   "hwid_bindings": {
     "1247055057489231914": "1525703921",
     "886398974456655892": "160377749",
