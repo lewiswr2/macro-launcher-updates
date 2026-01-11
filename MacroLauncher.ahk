@@ -618,7 +618,7 @@ SafeDownload(url, out, timeoutMs := 10000) {
             FileDelete out
         }
         
-        ToolTip "Downloading..."
+
         Download url, out
         
         startTime := A_TickCount
