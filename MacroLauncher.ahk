@@ -107,7 +107,7 @@ CheckForUpdatesPrompt() {
         . "Latest: " manifest.version "`n`n"
         . "What's new:`n" changelogText "`n"
         . "Do you want to update now?",
-        "V1LN clan Update",
+        "V1LN AHK Vault Update",
         "YesNo Iconi"
     )
     if (choice = "No")
@@ -618,7 +618,7 @@ SafeDownload(url, out, timeoutMs := 10000) {
             FileDelete out
         }
         
-        ToolTip "Downloading..."
+
         Download url, out
         
         startTime := A_TickCount
@@ -726,7 +726,7 @@ ParseManifest(json) {
 CreateMainGui() {
     global mainGui, COLORS, BASE_DIR, ICON_DIR
     
-    mainGui := Gui("-Resize +Border", " V1LN clan")
+    mainGui := Gui("-Resize +Border", " V1LN AHK Vault")
     mainGui.BackColor := COLORS.bg
     mainGui.SetFont("s10", "Segoe UI")
     
@@ -747,7 +747,7 @@ CreateMainGui() {
         }
     }
     
-    titleText := mainGui.Add("Text", "x80 y20 w280 h100 c" COLORS.text " BackgroundTrans", " V1LN clan")
+    titleText := mainGui.Add("Text", "x80 y20 w280 h100 c" COLORS.text " BackgroundTrans", " V1LN AHK Vault")
     titleText.SetFont("s24 bold")
     
     btnUpdate := mainGui.Add("Button", "x370 y25 w75 h35 Background" COLORS.success, "Update")
@@ -784,6 +784,8 @@ CreateMainGui() {
     
     linkY := bottomY + 15
     CreateLink(mainGui, "Discord", "https://discord.gg/v1ln", 25, linkY)
+    linkY := bottomY + 35
+    CreateLink(mainGui, "The Creators Discord", "https://discord.gg/mgkwyAWvYK", 25, linkY)
     
     mainGui.Show("w550 h" (bottomY + 60) " Center")
 }
@@ -1453,7 +1455,7 @@ DoSelfUpdate(url, newVer) {
     cmd := (
         '@echo off' "`r`n"
         'chcp 65001>nul' "`r`n"
-        'echo Updating V1LN clan Launcher...' "`r`n"
+        'echo Updating V1LN AHK Vault Launcher...' "`r`n"
         'timeout /t 2 /nobreak >nul' "`r`n"
         'copy /y "' tmpNew '" "' me '" >nul' "`r`n"
         'if errorlevel 1 (' "`r`n"
@@ -1572,7 +1574,7 @@ ShowUpdateFail(context, err, extra := "") {
         . "A_WorkingDir: " A_WorkingDir "`n"
         . "AppData: " A_AppData
 
-    MsgBox msg, "V1LN clan - Update Failed", "Icon! 0x10"
+    MsgBox msg, "V1LN AHK Vault - Update Failed", "Icon! 0x10"
 }
 IsValidZip(path) {
     try {
