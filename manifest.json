@@ -8,15 +8,12 @@
   "cred_password": "test123",
   "cred_hash": "1105182512",
   "banned_discord_ids": [],
-  "admin_discord_ids": [
-
-  ],
-  "banned_hwids": [
-
-  ],
+  "admin_discord_ids": [],
+  "banned_hwids": [],
   "hwid_bindings": {
     "1247055057489231914": "1525703921",
-    "886398974456655892": "160377749"
+    "886398974456655892": "160377749",
+    "898236174039138304": "1208564545"
   },
   "changelog": [
     "Yes"
