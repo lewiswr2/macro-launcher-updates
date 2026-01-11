@@ -2,6 +2,7 @@
 #SingleInstance Force
 #NoTrayIcon
 Persistent
+MsgBox "NEW LAUNCHER LOADED", "DEBUG", "Iconi"
 
 ; =======================
 ;   V1LN MacroLauncher
@@ -1193,3 +1194,4 @@ ML_ManualUpdate(*) {
     }
     ML_CheckForUpdatesPrompt()
 }
+
