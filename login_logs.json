@@ -1,6 +1,15 @@
 {
   "logs": [
     {
+      "t": "2026-01-10 20:27:22",
+      "pc": "YUP",
+      "user": "edwar",
+      "discordId": "886398974456655892",
+      "hwid": "160377749",
+      "role": "user",
+      "loginUser": "V1LnClan@discord"
+    },
+    {
       "t": "2026-01-10 20:25:39",
       "pc": "YUP",
       "user": "edwar",
