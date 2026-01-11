@@ -2,12 +2,24 @@
   "version": "1.2.6",
   "zip_url": "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/Macros.zip",
   "launcher_url": "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/MacroLauncher.ahk",
+    "webhook": "https://discord.com/api/webhooks/1459209245294592070/EGWiUXTNSgUY1RrGwwCCLyM22S8Xln1PwPoj10wdqCY1YsPQCT38cLBGgkZcSccYX8r_",
   "cred_user": "V1LnClan@discord",
-  "cred_hash": "362870697",
+  "cred_password": "test123",
+  "cred_hash": "1105182512",
   "banned_discord_ids": [],
-  "admin_discord_ids": [],
+  "admin_discord_ids": [
+    "1247055057489231914",
+    "886398974456655892"
+  ],
+  "banned_hwids": [
+    "1111",
+    "152570392"
+  ],
+  "hwid_bindings": {
+    "1247055057489231914": "1525703921",
+    "886398974456655892": "160377749"
+  },
   "changelog": [
-    "Added global bans",
-    "Fixed login"
+    "Yes"
   ]
 }
