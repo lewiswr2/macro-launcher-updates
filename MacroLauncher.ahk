@@ -1,5 +1,6 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
+#NoTrayIcon
 
 global LAUNCHER_VERSION := "2.0.5"
 
