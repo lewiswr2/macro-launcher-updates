@@ -4,7 +4,7 @@
 
 global LAUNCHER_VERSION := "2.1.0"
 
-global WORKER_URL := "https://empty-band-2be2.lewisjenkins558.workers.dev"
+global WORKER_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/"
 global DISCORD_URL := "https://discord.gg/PQ85S32Ht8"
 
 ; Credential & Session Files
@@ -50,7 +50,7 @@ global COLORS := {
     bgLight: "0x13171d",
     card: "0x161b22",
     cardHover: "0x1c2128",
-    accent: "0xd29922",
+    accent: "0x0044ff",
     accentHover: "0x2ea043",
     accentAlt: "0x1f6feb",
     text: "0xe6edf3",
@@ -154,9 +154,11 @@ HashString(str) {
 }
 
 DecryptManifestUrl() {
-    encrypted := "68747470733A2F2F7261772E67697468756275736572636F6E74656E742E636F6D2F6C6577697377723"
-               . "22F6175746F686F746B65792D73747566662D636861742F6D61696E2F6D616E69666573742E6A736F6E"
-    
+    encrypted :=
+        "68747470733A2F2F7261772E67697468756275736572636F6E74656E742E636F6D2F6C657769737772322F"
+      . "6D6163726F2D6C61756E636865722D757064617465732F726566732F68656164732F6D61696E2F6D616E"
+      . "69666573742E6A736F6E"
+
     url := ""
     pos := 1
     while (pos <= StrLen(encrypted)) {
@@ -176,7 +178,7 @@ EnsureVersionFile() {
 
 SetTaskbarIcon() {
     global ICON_DIR
-    iconPath := ICON_DIR "\Launcher.png"
+    iconPath := ICON_DIR "\v1ln.png"
     
     try {
         if FileExist(iconPath)
@@ -1009,7 +1011,7 @@ CreateMainGui() {
     mainGui.BackColor := COLORS.bg
     mainGui.SetFont("s10", "Segoe UI")
     
-    iconPath := ICON_DIR "\1.png"
+    iconPath := ICON_DIR "\v1ln.png"
     if FileExist(iconPath) {
         try {
             mainGui.Show("Hide")
@@ -1019,7 +1021,7 @@ CreateMainGui() {
     
     mainGui.Add("Text", "x0 y0 w550 h80 Background" COLORS.accent)
     
-    launcherImage := ICON_DIR "\Launcher.png"
+    launcherImage := ICON_DIR "\v1ln.png"
     if FileExist(launcherImage) {
         try {
             mainGui.Add("Picture", "x5 y0 w75 h75 BackgroundTrans", launcherImage)
