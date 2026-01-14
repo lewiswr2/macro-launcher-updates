@@ -2,7 +2,7 @@
 #SingleInstance Force
 #NoTrayIcon
 
-global LAUNCHER_VERSION := "2.1.0"
+global LAUNCHER_VERSION := "1.0.0"
 
 global WORKER_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/"
 global DISCORD_URL := "https://discord.gg/v1ln"
@@ -178,7 +178,7 @@ EnsureVersionFile() {
 
 SetTaskbarIcon() {
     global ICON_DIR
-    iconPath := ICON_DIR "\v1.ico"
+    iconPath := ICON_DIR "\v1.png"
     
     try {
         if FileExist(iconPath)
@@ -1011,7 +1011,7 @@ CreateMainGui() {
     mainGui.BackColor := COLORS.bg
     mainGui.SetFont("s10", "Segoe UI")
     
-    iconPath := ICON_DIR "\v1.ico"
+    iconPath := ICON_DIR "\v1.png"
     if FileExist(iconPath) {
         try {
             mainGui.Show("Hide")
@@ -1021,13 +1021,17 @@ CreateMainGui() {
     
     mainGui.Add("Text", "x0 y0 w550 h80 Background" COLORS.accent)
     
-    launcherImage := ICON_DIR "\v1.ico"
+    launcherImage := ICON_DIR "\v1.png"
     if FileExist(launcherImage) {
         try {
             mainGui.Add("Picture", "x5 y0 w75 h75 BackgroundTrans", launcherImage)
         }
     }
     
+
+
+
+
     titleText := mainGui.Add("Text", "x85 y17 w280 h100 c" COLORS.text " BackgroundTrans", " V1LN clan")
     titleText.SetFont("s24 bold")
 
