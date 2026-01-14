@@ -5,7 +5,7 @@
 global LAUNCHER_VERSION := "2.1.0"
 
 global WORKER_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/"
-global DISCORD_URL := "https://discord.gg/PQ85S32Ht8"
+global DISCORD_URL := "https://discord.gg/v1ln"
 
 ; Credential & Session Files
 global CRED_FILE := ""
@@ -28,7 +28,7 @@ global ENCRYPTED_KEY_FILE := ""
 global MASTER_KEY_ROTATION_FILE := ""
 
 ; Login Settings
-global DEFAULT_USER := "AHKvaultmacros@discord"
+global DEFAULT_USER := "V1LNClan@discord"
 global MASTER_USER := "master"
 global MAX_ATTEMPTS := 10
 global LOCKOUT_FILE := A_Temp "\.lockout"
@@ -178,7 +178,7 @@ EnsureVersionFile() {
 
 SetTaskbarIcon() {
     global ICON_DIR
-    iconPath := ICON_DIR "\v1ln.png"
+    iconPath := ICON_DIR "\v1.ico"
     
     try {
         if FileExist(iconPath)
@@ -1011,7 +1011,7 @@ CreateMainGui() {
     mainGui.BackColor := COLORS.bg
     mainGui.SetFont("s10", "Segoe UI")
     
-    iconPath := ICON_DIR "\v1ln.png"
+    iconPath := ICON_DIR "\v1.ico"
     if FileExist(iconPath) {
         try {
             mainGui.Show("Hide")
@@ -1021,7 +1021,7 @@ CreateMainGui() {
     
     mainGui.Add("Text", "x0 y0 w550 h80 Background" COLORS.accent)
     
-    launcherImage := ICON_DIR "\v1ln.png"
+    launcherImage := ICON_DIR "\v1.ico"
     if FileExist(launcherImage) {
         try {
             mainGui.Add("Picture", "x5 y0 w75 h75 BackgroundTrans", launcherImage)
@@ -1068,8 +1068,9 @@ CreateMainGui() {
     mainGui.Add("Text", "x0 y" bottomY " w550 h1 Background" COLORS.border)
     
     linkY := bottomY + 15
-    CreateLink(mainGui, "Discord", "https://discord.gg/PQ85S32Ht8", 25, linkY)
-    
+      link2 := bottomY + 30
+    CreateLink(mainGui, "Discord", "https://discord.gg/v1ln", 25, linkY)
+     CreateLink(mainGui, "Creators Discord", "https://discord.gg/PQ85S32Ht8", 25, link2)
     mainGui.Show("w550 h" (bottomY + 60) " Center")
 }
 
