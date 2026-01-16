@@ -1,6 +1,15 @@
 {
   "logs": [
     {
+      "t": "2026-01-16 21:24:17",
+      "pc": "5CD5302KNH",
+      "user": "SamVoet",
+      "discordId": "836235851074895954",
+      "hwid": "1302661147",
+      "role": "user",
+      "loginUser": "V1LNClan@discord"
+    },
+    {
       "t": "2026-01-16 21:23:43",
       "pc": "NETGEAR64837B12",
       "user": "nicoh",
