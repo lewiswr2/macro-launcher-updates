@@ -1007,7 +1007,7 @@ ParseManifest(json) {
 CreateMainGui() {
     global mainGui, COLORS, BASE_DIR, ICON_DIR
     
-    mainGui := Gui("-Resize +Border", " V1LN clan")
+    mainGui := Gui("-Resize +Border", " V1LN Clan")
     mainGui.BackColor := COLORS.bg
     mainGui.SetFont("s10", "Segoe UI")
     
