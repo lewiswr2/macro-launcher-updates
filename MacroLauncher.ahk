@@ -178,7 +178,7 @@ EnsureVersionFile() {
 
 SetTaskbarIcon() {
     global ICON_DIR
-    iconPath := ICON_DIR "\v1.png"
+    iconPath := ICON_DIR "\V1.png"
     
     try {
         if FileExist(iconPath)
@@ -1007,11 +1007,11 @@ ParseManifest(json) {
 CreateMainGui() {
     global mainGui, COLORS, BASE_DIR, ICON_DIR
     
-    mainGui := Gui("-Resize +Border", " V1LN clan")
+    mainGui := Gui("-Resize +Border", " V1LN Clan")
     mainGui.BackColor := COLORS.bg
     mainGui.SetFont("s10", "Segoe UI")
     
-    iconPath := ICON_DIR "\v1.png"
+    iconPath := ICON_DIR "\V1.png"
     if FileExist(iconPath) {
         try {
             mainGui.Show("Hide")
@@ -1021,7 +1021,7 @@ CreateMainGui() {
     
     mainGui.Add("Text", "x0 y0 w550 h80 Background" COLORS.accent)
     
-    launcherImage := ICON_DIR "\v1.png"
+    launcherImage := ICON_DIR "\V1.png"
     if FileExist(launcherImage) {
         try {
             mainGui.Add("Picture", "x5 y0 w75 h75 BackgroundTrans", launcherImage)
@@ -1072,9 +1072,9 @@ CreateMainGui() {
     mainGui.Add("Text", "x0 y" bottomY " w550 h1 Background" COLORS.border)
     
     linkY := bottomY + 15
-      link2 := bottomY + 30
+ 
     CreateLink(mainGui, "Discord", "https://discord.gg/v1ln", 25, linkY)
-     CreateLink(mainGui, "Creators Discord", "https://discord.gg/PQ85S32Ht8", 25, link2)
+
     mainGui.Show("w550 h" (bottomY + 60) " Center")
 }
 
