@@ -8,9 +8,7 @@
   "cred_user": "V1LNClan@discord",
   "cred_password": "test123",
   "cred_hash": "2071230206",
-  "banned_discord_ids": [
-    "836235851074895954"
-  ],
+  "banned_discord_ids": [],
   "admin_discord_ids": [
     "898236174039138304"
   ],
