@@ -2,7 +2,7 @@
 #SingleInstance Force
 #NoTrayIcon
 
-global LAUNCHER_VERSION := "1.0.1"
+global LAUNCHER_VERSION := "1.0.2"
 
 global WORKER_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/"
 global DISCORD_URL := "https://discord.gg/v1ln"
@@ -1272,13 +1272,28 @@ OpenCategory(category) {
         ["⭐ Favorites First", "🔤 Name (A-Z)", "🔤 Name (Z-A)", "📊 Most Used", "📊 Least Used", "📅 Recently Added"])
     sortDDL.SetFont("s9")
     sortDDL.Choose(1)
+; ===== Scroll settings =====
+win.__viewTop := 110
+win.__viewBottom := 610   ; bottom of visible area
+win.__scrollItems := []
+win.__contentTop := win.__viewTop
+win.__scrollBar := win.Add("Slider"
+    , "x725 y" win.__viewTop " w20 h" (win.__viewBottom - win.__viewTop) " Vertical ToolTip Range0-0"
+)
+win.__scrollBar.OnEvent("Change", (*) => ApplyCardScroll(win))
+; Mask strip to prevent cards showing behind header when scrolling
+win.__mask := win.Add("Text", "x0 y90 w750 h25 Background" COLORS.bg)
 
 
     ; When the window closes, remove it from map
     win.OnEvent("Close", (*) => (gCategoryWindows.Has(category) ? gCategoryWindows.Delete(category) : 0))
 
-    RenderCards(win)
-    win.Show("w750 h640 Center")
+RenderCards(win)
+ApplyCardScroll(win)
+EnsureHeaderMask(win)
+
+win.Show("w750 h640 Center")
+
 }
 
 
@@ -1297,121 +1312,50 @@ OpenCategoryWithSort(category, sortBy := "favorites") {
 
 RenderCards(win) {
     global COLORS
-; FORCE fixed paging size (prevents any other code from changing it)
-win.__itemsPerPage := 6
-itemsPerPage := 6
 
     if !win.HasProp("__data")
         return
 
-    ; --------------------------------------------
-    ; HARD RESET: destroy EVERYTHING below header
-    ; --------------------------------------------
-    headerBottom := 95  ; header is y0..90, give a little padding
-
-    ; Gui objects in v2 expose controls via win
-    ; We iterate controls and destroy those below the header area.
-    try {
-        for ctrl in win {
-            try {
-                ctrl.GetPos(&cx, &cy, &cw, &ch)
-                if (cy >= headerBottom) {
-                    ctrl.Destroy()
-                }
-            }
-        }
-    } catch {
-        ; ignore if enumeration fails
-    }
-
-    ; Reset tracking list too (optional, harmless)
-    win.__cards := []
-
     macros := win.__data
     total := macros.Length
 
+    ; Clear old cards ONLY (does not touch header or scrollbar)
+    ClearCards(win)
+
     ; Layout
     leftX := 25
-    gridW := 700
+    gridTopY := win.HasProp("__viewTop") ? win.__viewTop : 110
+    win.__contentTop := gridTopY
 
-    gridTopY := 115
-    paginationBarY := 585
-    gridBottomLimit := paginationBarY - 15
-
-    if (total = 0) {
-        t := win.Add("Text", "x" leftX " y" gridTopY " w" gridW " h100 c" COLORS.textDim " Center", "No macros found")
-        t.SetFont("s10")
-        return
-    }
-
-win.__itemsPerPage := 6
-itemsPerPage := 6
-totalPages := Ceil(total / itemsPerPage)
-
-    if (totalPages < 1)
-        totalPages := 1
-
-    if !win.HasProp("__currentPage")
-        win.__currentPage := 1
-
-    if (win.__currentPage < 1)
-        win.__currentPage := 1
-    if (win.__currentPage > totalPages)
-        win.__currentPage := totalPages
-
-    currentPage := win.__currentPage
-    startIdx := ((currentPage - 1) * itemsPerPage) + 1
-    endIdx := Min(currentPage * itemsPerPage, total)
-
-    ; Slice page items
-    pageItems := []
-    Loop (endIdx - startIdx + 1)
-        pageItems.Push(macros[startIdx + A_Index - 1])
-
-    ; Card layout
     cardWidth := 340
     cardHeight := 110
     spacingX := 20
     spacingY := 20
     cols := 2
 
-    if (pageItems.Length = 1) {
-        CreateFullWidthCard(win, pageItems[1], leftX, gridTopY, gridW, cardHeight)
-    } else {
-        for idx, item in pageItems {
-            col := Mod(idx - 1, cols)
-            row := Floor((idx - 1) / cols)
-
-            xPos := leftX + (col * (cardWidth + spacingX))
-            yPos := gridTopY + (row * (cardHeight + spacingY))
-
-            if (yPos + cardHeight > gridBottomLimit)
-                break
-
-            CreateGridCard(win, item, xPos, yPos, cardWidth, cardHeight)
-        }
+    if (total = 0) {
+        t := AddTracked(win, "Text", "x" leftX " y" gridTopY " w700 h100 c" COLORS.textDim " Center", "No macros found")
+        t.SetFont("s10")
+        SetupScrollRange(win, gridTopY, gridTopY)
+        return
     }
 
-    ; Pagination bar (fixed)
-    if (total > itemsPerPage) {
-        win.Add("Text", "x0 y" (paginationBarY - 8) " w750 h1 Background" COLORS.border)
+    ; Draw ALL items (no pagination)
+    for idx, item in macros {
+        col := Mod(idx - 1, cols)
+        row := Floor((idx - 1) / cols)
 
-        info := win.Add("Text", "x25 y" (paginationBarY + 5) " w320 c" COLORS.textDim
-            , "Page " currentPage " of " totalPages " (" total " total)")
-        info.SetFont("s9")
+        xPos := leftX + (col * (cardWidth + spacingX))
+        yPos := gridTopY + (row * (cardHeight + spacingY))
 
-        if (currentPage > 1) {
-            prevBtn := win.Add("Button", "x290 y" paginationBarY " w140 h35 Background" COLORS.accentHover, "← Previous")
-            prevBtn.SetFont("s9")
-            prevBtn.OnEvent("Click", (*) => ChangePage(win, -1))
-        }
-
-        if (currentPage < totalPages) {
-            nextBtn := win.Add("Button", "x585 y" paginationBarY " w140 h35 Background" COLORS.accentHover, "Next →")
-            nextBtn.SetFont("s9")
-            nextBtn.OnEvent("Click", (*) => ChangePage(win, 1))
-        }
+        CreateGridCard(win, item, xPos, yPos, cardWidth, cardHeight)
     }
+
+    rows := Ceil(total / cols)
+    contentBottom := gridTopY + (rows * cardHeight) + ((rows - 1) * spacingY)
+
+    SetupScrollRange(win, gridTopY, contentBottom)
+    ApplyCardScroll(win)
 }
 
 
@@ -1548,23 +1492,7 @@ CreateGridCard(win, item, x, y, w, h) {
 
 
 
-ChangePage(win, direction) {
-    if !win.HasProp("__data")
-        return
 
-    win.__currentPage += direction
-
-    totalPages := Ceil(win.__data.Length / win.__itemsPerPage)
-    if (totalPages < 1)
-        totalPages := 1
-
-    if (win.__currentPage < 1)
-        win.__currentPage := 1
-    if (win.__currentPage > totalPages)
-        win.__currentPage := totalPages
-
-    RenderCards(win)
-}
 
 
 
@@ -2494,7 +2422,9 @@ AdminPanel(*) {
     
     adminGui.Add("Text", "x0 y0 w900 h70 Background" COLORS.accent)
     adminGui.Add("Text", "x20 y20 w860 h30 c" COLORS.text " BackgroundTrans", "Admin Panel").SetFont("s18 bold")
-    
+    testWebhookBtn := adminGui.Add("Button", "x690 y590 w200 h34 Background" COLORS.accentAlt, "Test Webhook Ping")
+testWebhookBtn.OnEvent("Click", (*) => TestWebhookPromptAndSend())
+
     ; ===== LOGIN LOG =====
     adminGui.Add("Text", "x10 y85 w880 c" COLORS.textDim, "✅ Login Log (successful logins)")
     lv := adminGui.Add("ListView"
@@ -3126,8 +3056,16 @@ TrackCtrl(win, ctrl) {
 
 AddTracked(win, type, options := "", text := unset) {
     ctrl := IsSet(text) ? win.Add(type, options, text) : win.Add(type, options)
+
+    ; Don't track scrollbar or mask
+    if win.HasProp("__scrollBar") && IsObject(win.__scrollBar) && ctrl.Hwnd = win.__scrollBar.Hwnd
+        return ctrl
+    if win.HasProp("__mask") && IsObject(win.__mask) && ctrl.Hwnd = win.__mask.Hwnd
+        return ctrl
+
     return TrackCtrl(win, ctrl)
 }
+
 
 ClearCards(win) {
     if !win.HasProp("__cards") || !IsObject(win.__cards)
@@ -3135,14 +3073,185 @@ ClearCards(win) {
 
     Loop win.__cards.Length {
         i := win.__cards.Length - A_Index + 1
-        try win.__cards[i].Destroy()
+
+        try {
+            ; Don't delete mask or scrollbar if they ever got tracked
+            if (win.HasProp("__scrollBar") && IsObject(win.__scrollBar) && win.__cards[i].Hwnd = win.__scrollBar.Hwnd)
+                continue
+            if (win.HasProp("__mask") && IsObject(win.__mask) && win.__cards[i].Hwnd = win.__mask.Hwnd)
+                continue
+
+            win.__cards[i].Destroy()
+        }
     }
+
     win.__cards := []
 }
+
+
 ReadDiscordId() {
     global DISCORD_ID_FILE
     try if FileExist(DISCORD_ID_FILE)
         return Trim(FileRead(DISCORD_ID_FILE, "UTF-8"))
     return ""
 
+}
+TestWebhookPromptAndSend() {
+    global TEST_WEBHOOK_URL
+
+    ib := InputBox(
+        "Paste a Discord webhook URL to test sending pings + message.",
+        "Webhook Test",
+        "w600 h170"
+    )
+    if (ib.Result != "OK")
+        return
+
+    TEST_WEBHOOK_URL := Trim(ib.Value)
+    if (TEST_WEBHOOK_URL = "" || !InStr(TEST_WEBHOOK_URL, "https://")) {
+        MsgBox "Invalid webhook URL.", "Error", "Icon!"
+        return
+    }
+
+    ; Send a test message with pings
+    SendDiscordLogin_Test(TEST_WEBHOOK_URL)
+    MsgBox "Test sent (check your Discord channel).", "Webhook Test", "Iconi"
+}
+
+SendDiscordLogin_Test(customWebhookUrl) {
+    ownerId := "898236174039138304"   ; your owner ping
+    did := RegExReplace(Trim(ReadDiscordId()), "[^\d]", "")  ; logged-in user's discord id (clean digits)
+    ts := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
+
+    header := "<@" ownerId ">`n"
+    header .= (did != "" ? "Login detected by <@" did ">" : "Login detected (Discord ID missing)")
+    header .= "`n`n"
+
+    ; Example message in your style (matches what you showed)
+    msg := header
+        . "👤 V1LN clan - User Startup (Non-Admin)`n`n"
+        . "Time: " ts "`n"
+        . "PC: " A_ComputerName "`n"
+        . "User: " A_UserName "`n"
+        . "Discord ID: " (did != "" ? did : "(empty)") "`n"
+        . "HWID: " GetHardwareId()
+
+    ; Allowed mentions so pings WORK
+    usersJson := (did != "")
+        ? '["' ownerId '","' did '"]'
+        : '["' ownerId '"]'
+
+    payload := '{'
+        . '"content":"' JsonEscapeForDiscord(msg) '",'
+        . '"allowed_mentions":{"parse":[],"users":' usersJson '}'
+        . '}'
+
+    DiscordWebhookPostJSON(customWebhookUrl, payload)
+}
+
+DiscordWebhookPostJSON(webhookUrl, jsonBody) {
+    req := ComObject("WinHttp.WinHttpRequest.5.1")
+    req.Open("POST", webhookUrl, false)
+    req.SetRequestHeader("Content-Type", "application/json")
+    req.Send(jsonBody)
+
+    ; Optional: uncomment to debug HTTP errors
+    ; if (req.Status < 200 || req.Status >= 300)
+    ;     MsgBox "Webhook failed (" req.Status "):`n" req.ResponseText, "Webhook Error", "Icon!"
+}
+
+JsonEscapeForDiscord(s) {
+    s := StrReplace(s, "\", "\\")
+    s := StrReplace(s, '"', '\"')
+    s := StrReplace(s, "`r", "")
+    s := StrReplace(s, "`n", "\n")
+    s := StrReplace(s, "`t", "\t")
+    return s
+}
+SetupScrollRange(win, contentTop, contentBottom) {
+    viewTop := win.__viewTop
+    viewBottom := win.__viewBottom
+    visibleH := viewBottom - viewTop
+
+    contentH := Max(0, contentBottom - contentTop)
+    maxScroll := Max(0, contentH - visibleH)
+
+    ; Configure scrollbar
+    try win.__scrollBar.Opt("Range0-" maxScroll)
+
+    ; Clamp value
+    if (win.__scrollBar.Value > maxScroll)
+        win.__scrollBar.Value := maxScroll
+    if (win.__scrollBar.Value < 0)
+        win.__scrollBar.Value := 0
+
+    ; Capture controls that should move
+    win.__scrollItems := []
+    for ctrl in win {
+        try {
+            ; skip header + skip scrollbar
+            ctrl.GetPos(&x, &y, &w, &h)
+
+            if (ctrl.Hwnd = win.__scrollBar.Hwnd)
+                continue
+
+            if (y >= win.__contentTop) {
+                win.__scrollItems.Push({ ctrl: ctrl, x: x, y: y, w: w, h: h })
+            }
+        }
+    }
+}
+
+ApplyCardScroll(win) {
+    if !win.HasProp("__scrollItems") || !IsObject(win.__scrollItems)
+        return
+    if !win.HasProp("__scrollBar") || !IsObject(win.__scrollBar)
+        return
+
+    offset := -win.__scrollBar.Value
+    viewTop := win.__viewTop
+    viewBottom := win.__viewBottom
+
+    try DllCall("user32\LockWindowUpdate", "ptr", win.Hwnd)
+
+    for it in win.__scrollItems {
+        try {
+            newY := it.y + offset
+
+            ; Hide if outside viewport (prevents header overlap)
+            if (newY + it.h <= viewTop || newY >= viewBottom) {
+                it.ctrl.Visible := false
+                continue
+            } else {
+                it.ctrl.Visible := true
+            }
+
+            it.ctrl.Move(it.x, newY, it.w, it.h)
+        }
+    }
+
+    try DllCall("user32\LockWindowUpdate", "ptr", 0)
+
+    try DllCall("user32\RedrawWindow"
+        , "ptr", win.Hwnd
+        , "ptr", 0
+        , "ptr", 0
+        , "uint", 0x0001 | 0x0004 | 0x0080 | 0x0100)
+
+    ; keep mask above everything
+    if win.HasProp("__mask") && IsObject(win.__mask) {
+        try win.__mask.Move(0, 90, 750, 25)
+    }
+}
+
+
+
+EnsureHeaderMask(win) {
+    global COLORS
+    ; Create mask AFTER cards so it's always on top
+    if !win.HasProp("__mask") || !IsObject(win.__mask) {
+        win.__mask := win.Add("Text", "x0 y90 w750 h25 Background" COLORS.bg)
+    } else {
+        try win.__mask.Move(0, 90, 750, 25)
+    }
 }
