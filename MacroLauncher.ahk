@@ -2,7 +2,7 @@
 #SingleInstance Force
 #NoTrayIcon
 
-global LAUNCHER_VERSION := "1.0.0"
+global LAUNCHER_VERSION := "1.0.1"
 
 global WORKER_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/"
 global DISCORD_URL := "https://discord.gg/v1ln"
@@ -44,6 +44,7 @@ global ICON_DIR := SECURE_VAULT "\res"
 global MANIFEST_URL := DecryptManifestUrl()
 global mainGui := 0
 global MACHINE_KEY := ""
+global gCategoryWindows := Map()
 
 global COLORS := {
     bg: "0x0a0e14",
@@ -1199,10 +1200,27 @@ SafeOpenURL(url) {
 ; ========== CATEGORY VIEW ==========
 
 OpenCategory(category) {
-    global COLORS, BASE_DIR
-    
+    global COLORS, BASE_DIR, gCategoryWindows
+
+    ; If window already exists, just bring it to front + refresh data
+    if (gCategoryWindows.Has(category)) {
+        try {
+            win := gCategoryWindows[category]
+            if WinExist("ahk_id " win.Hwnd) {
+                win.__data := GetMacrosWithInfo(category, win.HasProp("__sortBy") ? win.__sortBy : "favorites")
+                RenderCards(win)
+                win.Show()
+                WinActivate("ahk_id " win.Hwnd)
+                return
+            }
+        } catch {
+            ; fall through and recreate
+        }
+        try gCategoryWindows.Delete(category)
+    }
+
     macros := GetMacrosWithInfo(category)
-    
+
     if (macros.Length = 0) {
         MsgBox(
             "No macros found in '" category "'`n`n"
@@ -1214,18 +1232,21 @@ OpenCategory(category) {
         )
         return
     }
-    
+
     win := Gui("-Resize +Border", category " - Macros")
     win.BackColor := COLORS.bg
     win.SetFont("s10", "Segoe UI")
-    
+
+    ; Store in global map so we never open duplicates
+    gCategoryWindows[category] := win
+
     win.__data := macros
     win.__cards := []
     win.__currentPage := 1
     win.__itemsPerPage := 8
     win.__sortBy := "favorites"
     win.__category := category
-    
+
     gameIcon := GetGameIcon(category)
     if (gameIcon && FileExist(gameIcon)) {
         try {
@@ -1233,370 +1254,338 @@ OpenCategory(category) {
             win.Opt("+Icon" gameIcon)
         }
     }
-    
+
+    ; Header (static controls)
     win.Add("Text", "x0 y0 w750 h90 Background" COLORS.accent)
-    
+
     backBtn := win.Add("Button", "x20 y25 w70 h35 Background" COLORS.accentHover, "← Back")
     backBtn.SetFont("s10")
     backBtn.OnEvent("Click", (*) => win.Destroy())
-    
+
     title := win.Add("Text", "x105 y20 w400 h100 c" COLORS.text " BackgroundTrans", category)
     title.SetFont("s22 bold")
-    
+
     sortLabel := win.Add("Text", "x530 y25 w60 c" COLORS.text " BackgroundTrans", "Sort by:")
     sortLabel.SetFont("s9")
-    
-    sortDDL := win.Add("DropDownList", "x530 y45 w200 Background" COLORS.card " c" COLORS.text, 
+
+    sortDDL := win.Add("DropDownList", "x530 y45 w200 Background" COLORS.card " c" COLORS.text,
         ["⭐ Favorites First", "🔤 Name (A-Z)", "🔤 Name (Z-A)", "📊 Most Used", "📊 Least Used", "📅 Recently Added"])
     sortDDL.SetFont("s9")
     sortDDL.Choose(1)
-    sortDDL.OnEvent("Change", (*) => ChangeSortAndRefresh(win, sortDDL.Text, category))
-    
-    win.__scrollY := 110
-    
+
+
+    ; When the window closes, remove it from map
+    win.OnEvent("Close", (*) => (gCategoryWindows.Has(category) ? gCategoryWindows.Delete(category) : 0))
+
     RenderCards(win)
     win.Show("w750 h640 Center")
 }
 
-ChangeSortAndRefresh(win, sortText, category) {
-    sortMap := Map(
-        "⭐ Favorites First", "favorites",
-        "🔤 Name (A-Z)", "name_asc",
-        "🔤 Name (Z-A)", "name_desc",
-        "📊 Most Used", "runs_desc",
-        "📊 Least Used", "runs_asc",
-        "📅 Recently Added", "recent"
-    )
-    
-    sortBy := sortMap.Has(sortText) ? sortMap[sortText] : "favorites"
-    
-    win.Destroy()
-    Sleep 100
-    OpenCategoryWithSort(category, sortBy)
-}
+
 
 OpenCategoryWithSort(category, sortBy := "favorites") {
-    global COLORS, BASE_DIR
-    
-    macros := GetMacrosWithInfo(category, sortBy)
-    
-    if (macros.Length = 0) {
-        MsgBox("No macros found in '" category "'", "No Macros", "Iconi")
-        return
-    }
-    
-    win := Gui("-Resize +Border", category " - Macros")
-    win.BackColor := COLORS.bg
-    win.SetFont("s10", "Segoe UI")
-    
-    win.__data := macros
-    win.__cards := []
-    win.__currentPage := 1
-    win.__itemsPerPage := 8
-    win.__sortBy := sortBy
-    win.__category := category
-    
-    gameIcon := GetGameIcon(category)
-    if (gameIcon && FileExist(gameIcon)) {
-        try {
-            win.Show("Hide")
-            win.Opt("+Icon" gameIcon)
-        }
-    }
-    
-    win.Add("Text", "x0 y0 w750 h90 Background" COLORS.accent)
-    
-    backBtn := win.Add("Button", "x20 y25 w70 h35 Background" COLORS.accentHover, "← Back")
-    backBtn.SetFont("s10")
-    backBtn.OnEvent("Click", (*) => win.Destroy())
-    
-    title := win.Add("Text", "x105 y20 w400 h100 c" COLORS.text " BackgroundTrans", category)
-    title.SetFont("s22 bold")
-    
-    sortLabel := win.Add("Text", "x530 y25 w60 c" COLORS.text " BackgroundTrans", "Sort by:")
-    sortLabel.SetFont("s9")
-    
-    sortDDL := win.Add("DropDownList", "x530 y45 w200 Background" COLORS.card " c" COLORS.text, 
-        ["⭐ Favorites First", "🔤 Name (A-Z)", "🔤 Name (Z-A)", "📊 Most Used", "📊 Least Used", "📅 Recently Added"])
-    sortDDL.SetFont("s9")
-    
-    sortIndexMap := Map(
-        "favorites", 1,
-        "name_asc", 2,
-        "name_desc", 3,
-        "runs_desc", 4,
-        "runs_asc", 5,
-        "recent", 6
-    )
-    sortDDL.Choose(sortIndexMap.Has(sortBy) ? sortIndexMap[sortBy] : 1)
-    sortDDL.OnEvent("Change", (*) => ChangeSortAndRefresh(win, sortDDL.Text, category))
-    
-    win.__scrollY := 110
-    
-    RenderCards(win)
-    win.Show("w750 h640 Center")
-}
-
-RenderCards(win) {
-    global COLORS
-    
-    if !win.HasProp("__data")
-        return
-    
-    if win.HasProp("__cards") && win.__cards.Length > 0 {
-        for ctrl in win.__cards {
-            try ctrl.Destroy()
-            catch {
-            }
-        }
-    }
-    win.__cards := []
-    
-    macros := win.__data
-    scrollY := win.__scrollY
-    
-    if (macros.Length = 0) {
-        noResult := win.Add("Text", "x25 y" scrollY " w700 h100 c" COLORS.textDim " Center", "No macros found")
-        noResult.SetFont("s10")
-        win.__cards.Push(noResult)
-        return
-    }
-    
-    itemsPerPage := win.__itemsPerPage
-    currentPage := win.__currentPage
-    totalPages := Ceil(macros.Length / itemsPerPage)
-    
-    if (currentPage > totalPages) {
-        currentPage := totalPages
-        win.__currentPage := currentPage
-    }
-    
-    startIdx := ((currentPage - 1) * itemsPerPage) + 1
-    endIdx := Min(currentPage * itemsPerPage, macros.Length)
-    
-    itemsToShow := endIdx - startIdx + 1
-    
-    if (itemsToShow = 1) {
-        item := macros[startIdx]
-        CreateFullWidthCard(win, item, 25, scrollY, 700, 110)
-    } else {
-        cardWidth := 340
-        cardHeight := 110
-        spacing := 10
-        yPos := scrollY
-        
-        Loop itemsToShow {
-            idx := startIdx + A_Index - 1
-            item := macros[idx]
-            
-            col := Mod(A_Index - 1, 2)
-            row := Floor((A_Index - 1) / 2)
-            
-            xPos := 25 + (col * (cardWidth + spacing))
-            yPos := scrollY + (row * (cardHeight + spacing))
-            
-            CreateGridCard(win, item, xPos, yPos, cardWidth, cardHeight)
-        }
-    }
-    
-    if (macros.Length > itemsPerPage) {
-        paginationY := scrollY + 470
-        
-        pageInfo := win.Add("Text", "x25 y" paginationY " w300 c" COLORS.textDim, 
-            "Page " currentPage " of " totalPages " (" macros.Length " total)")
-        pageInfo.SetFont("s9")
-        win.__cards.Push(pageInfo)
-        
-        if (currentPage > 1) {
-            prevBtn := win.Add("Button", "x335 y" (paginationY - 5) " w90 h35 Background" COLORS.accentHover, "← Previous")
-            prevBtn.SetFont("s9")
-            prevBtn.OnEvent("Click", (*) => ChangePage(win, -1))
-            win.__cards.Push(prevBtn)
-        }
-        
-        if (currentPage < totalPages) {
-            nextBtn := win.Add("Button", "x635 y" (paginationY - 5) " w90 h35 Background" COLORS.accentHover, "Next →")
-            nextBtn.SetFont("s9")
-            nextBtn.OnEvent("Click", (*) => ChangePage(win, 1))
-            win.__cards.Push(nextBtn)
-        }
-    }
-}
-
-CreateFullWidthCard(win, item, x, y, w, h) {
-    global COLORS
-    
-    card := win.Add("Text", "x" x " y" y " w" w " h" h " Background" COLORS.card)
-    win.__cards.Push(card)
-    
-    iconPath := GetMacroIcon(item.path)
-    hasIcon := false
-    
-    if (iconPath && FileExist(iconPath)) {
-        try {
-            pic := win.Add("Picture", "x" (x + 20) " y" (y + 15) " w80 h80 BackgroundTrans", iconPath)
-            win.__cards.Push(pic)
-            hasIcon := true
-        } catch {
-        }
-    }
-    
-    if (!hasIcon) {
-        initial := SubStr(item.info.Title, 1, 1)
-        iconColor := GetCategoryColor(item.info.Title)
-        badge := win.Add("Text", "x" (x + 20) " y" (y + 15) " w80 h80 Background" iconColor " Center", initial)
-        badge.SetFont("s32 bold c" COLORS.text)
-        win.__cards.Push(badge)
-    }
-    
-    titleCtrl := win.Add("Text", "x" (x + 120) " y" (y + 20) " w340 h100 c" COLORS.text " BackgroundTrans", item.info.Title)
-    titleCtrl.SetFont("s13 bold")
-    win.__cards.Push(titleCtrl)
-    
-    creatorCtrl := win.Add("Text", "x" (x + 120) " y" (y + 50) " w340 c" COLORS.textDim " BackgroundTrans", "by " item.info.Creator)
-    creatorCtrl.SetFont("s10")
-    win.__cards.Push(creatorCtrl)
-    
-    versionCtrl := win.Add("Text", "x" (x + 120) " y" (y + 75) " w60 h22 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
-    versionCtrl.SetFont("s9 bold")
-    win.__cards.Push(versionCtrl)
-    
-    runCount := GetRunCount(item.path)
-    if (runCount > 0) {
-        runCountCtrl := win.Add("Text", "x" (x + 190) " y" (y + 75) " w100 h22 c" COLORS.textDim " BackgroundTrans", "Runs: " runCount)
-        runCountCtrl.SetFont("s9")
-        win.__cards.Push(runCountCtrl)
-    }
-    
-currentPath := item.path
-isFav := IsFavorite(currentPath)
-favBtn := win.Add(
-    "Button",
-    "x" (x + w - 145)
-    " y" (y + 20)  ; Adjust Y position slightly
-    " w35 h35 Center Background" (isFav ? COLORS.favorite : COLORS.cardHover),
-    isFav ? "★" : "✰"
-)
-favBtn.SetFont("s18", "Segoe UI Symbol")  ; Slightly larger font
-favBtn.OnEvent("Click", (*) => ToggleFavoriteAndRefresh(win, currentPath))
-win.__cards.Push(favBtn)
-    
-    runBtn := win.Add("Button", "x" (x + w - 100) " y" (y + 20) " w90 h35 Background" COLORS.success, "▶ Run")
-    runBtn.SetFont("s11 bold")
-    runBtn.OnEvent("Click", (*) => RunMacro(currentPath))
-    win.__cards.Push(runBtn)
-    
-    if (Trim(item.info.Links) != "") {
-        currentLinks := item.info.Links
-        linksBtn := win.Add("Button", "x" (x + w - 100) " y" (y + 65) " w90 h30 Background" COLORS.accentAlt, "🔗 Links")
-        linksBtn.SetFont("s10")
-        linksBtn.OnEvent("Click", (*) => OpenLinks(currentLinks))
-        win.__cards.Push(linksBtn)
-    }
-}
-
-CreateGridCard(win, item, x, y, w, h) {
-    global COLORS
-    
-    card := win.Add("Text", "x" x " y" y " w" w " h" h " Background" COLORS.card)
-    win.__cards.Push(card)
-    
-    iconPath := GetMacroIcon(item.path)
-    hasIcon := false
-    
-    if (iconPath && FileExist(iconPath)) {
-        try {
-            pic := win.Add("Picture", "x" (x + 15) " y" (y + 15) " w60 h60 BackgroundTrans", iconPath)
-            win.__cards.Push(pic)
-            hasIcon := true
-        } catch {
-        }
-    }
-    
-    if (!hasIcon) {
-        initial := SubStr(item.info.Title, 1, 1)
-        iconColor := GetCategoryColor(item.info.Title)
-        badge := win.Add("Text", "x" (x + 15) " y" (y + 15) " w60 h60 Background" iconColor " Center", initial)
-        badge.SetFont("s24 bold c" COLORS.text)
-        win.__cards.Push(badge)
-    }
-    
-    titleCtrl := win.Add("Text", "x" (x + 90) " y" (y + 15) " w" (w - 190) " h30 c" COLORS.text " BackgroundTrans", item.info.Title)
-    titleCtrl.SetFont("s11 bold")
-    win.__cards.Push(titleCtrl)
-    
-    creatorCtrl := win.Add("Text", "x" (x + 90) " y" (y + 40) " w" (w - 190) " c" COLORS.textDim " BackgroundTrans", "by " item.info.Creator)
-    creatorCtrl.SetFont("s9")
-    win.__cards.Push(creatorCtrl)
-    
-    versionCtrl := win.Add("Text", "x" (x + 90) " y" (y + 63) " w50 h18 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
-    versionCtrl.SetFont("s8 bold")
-    win.__cards.Push(versionCtrl)
-    
-    runCount := GetRunCount(item.path)
-    if (runCount > 0) {
-        runCountCtrl := win.Add("Text", "x" (x + 150) " y" (y + 63) " w80 h18 c" COLORS.textDim " BackgroundTrans", "Runs: " runCount)
-        runCountCtrl.SetFont("s8")
-        win.__cards.Push(runCountCtrl)
-    }
-    
-    currentPath := item.path
-    isFav := IsFavorite(currentPath)
-favBtn := win.Add(
-    "Button",
-    "x" (x + w - 110)
-    " y" (y + 20)  ; Adjust Y position slightly
-    " w20 h20 Center Background" (isFav ? COLORS.favorite : COLORS.cardHover),
-    isFav ? "★" : "✰"
-)
-favBtn.SetFont("s11", "Segoe UI Symbol")  ; Slightly larger font
-favBtn.OnEvent("Click", (*) => ToggleFavoriteAndRefresh(win, currentPath))
-win.__cards.Push(favBtn)
-
-    
-    ; Run button - top right
-    runBtn := win.Add("Button", "x" (x + w - 90) " y" (y + 15) " w80 h30 Background" COLORS.success, "▶ Run")
-    runBtn.SetFont("s10 bold")
-    runBtn.OnEvent("Click", (*) => RunMacro(currentPath))
-    win.__cards.Push(runBtn)
-    
-    ; Links button - moved to bottom right
-    if (Trim(item.info.Links) != "") {
-        currentLinks := item.info.Links
-        linksBtn := win.Add("Button", "x" (x + w - 90) " y" (y + 83) " w80 h22 Background" COLORS.accentAlt, "🔗 Links")
-        linksBtn.SetFont("s8")
-        linksBtn.OnEvent("Click", (*) => OpenLinks(currentLinks))
-        win.__cards.Push(linksBtn)
-    }
-}
-
-ToggleFavoriteAndRefresh(win, macroPath) {
-    ToggleFavorite(macroPath)
-    
-    winTitle := win.Title
-    
-    if RegExMatch(winTitle, "^(.+) - Macros$", &m) {
-        category := m[1]
-        win.Destroy()
-        Sleep 100
-        OpenCategory(category)
-    } else {
+    OpenCategory(category)
+    global gCategoryWindows
+    if gCategoryWindows.Has(category) {
+        win := gCategoryWindows[category]
+        win.__sortBy := sortBy
+        win.__data := GetMacrosWithInfo(category, sortBy)
+        win.__currentPage := 1
         RenderCards(win)
     }
 }
 
-ChangePage(win, direction) {
-    win.__currentPage := win.__currentPage + direction
-    
-    totalPages := Ceil(win.__data.Length / win.__itemsPerPage)
-    
+RenderCards(win) {
+    global COLORS
+; FORCE fixed paging size (prevents any other code from changing it)
+win.__itemsPerPage := 6
+itemsPerPage := 6
+
+    if !win.HasProp("__data")
+        return
+
+    ; --------------------------------------------
+    ; HARD RESET: destroy EVERYTHING below header
+    ; --------------------------------------------
+    headerBottom := 95  ; header is y0..90, give a little padding
+
+    ; Gui objects in v2 expose controls via win
+    ; We iterate controls and destroy those below the header area.
+    try {
+        for ctrl in win {
+            try {
+                ctrl.GetPos(&cx, &cy, &cw, &ch)
+                if (cy >= headerBottom) {
+                    ctrl.Destroy()
+                }
+            }
+        }
+    } catch {
+        ; ignore if enumeration fails
+    }
+
+    ; Reset tracking list too (optional, harmless)
+    win.__cards := []
+
+    macros := win.__data
+    total := macros.Length
+
+    ; Layout
+    leftX := 25
+    gridW := 700
+
+    gridTopY := 115
+    paginationBarY := 585
+    gridBottomLimit := paginationBarY - 15
+
+    if (total = 0) {
+        t := win.Add("Text", "x" leftX " y" gridTopY " w" gridW " h100 c" COLORS.textDim " Center", "No macros found")
+        t.SetFont("s10")
+        return
+    }
+
+win.__itemsPerPage := 6
+itemsPerPage := 6
+totalPages := Ceil(total / itemsPerPage)
+
+    if (totalPages < 1)
+        totalPages := 1
+
+    if !win.HasProp("__currentPage")
+        win.__currentPage := 1
+
     if (win.__currentPage < 1)
         win.__currentPage := 1
     if (win.__currentPage > totalPages)
         win.__currentPage := totalPages
-    
+
+    currentPage := win.__currentPage
+    startIdx := ((currentPage - 1) * itemsPerPage) + 1
+    endIdx := Min(currentPage * itemsPerPage, total)
+
+    ; Slice page items
+    pageItems := []
+    Loop (endIdx - startIdx + 1)
+        pageItems.Push(macros[startIdx + A_Index - 1])
+
+    ; Card layout
+    cardWidth := 340
+    cardHeight := 110
+    spacingX := 20
+    spacingY := 20
+    cols := 2
+
+    if (pageItems.Length = 1) {
+        CreateFullWidthCard(win, pageItems[1], leftX, gridTopY, gridW, cardHeight)
+    } else {
+        for idx, item in pageItems {
+            col := Mod(idx - 1, cols)
+            row := Floor((idx - 1) / cols)
+
+            xPos := leftX + (col * (cardWidth + spacingX))
+            yPos := gridTopY + (row * (cardHeight + spacingY))
+
+            if (yPos + cardHeight > gridBottomLimit)
+                break
+
+            CreateGridCard(win, item, xPos, yPos, cardWidth, cardHeight)
+        }
+    }
+
+    ; Pagination bar (fixed)
+    if (total > itemsPerPage) {
+        win.Add("Text", "x0 y" (paginationBarY - 8) " w750 h1 Background" COLORS.border)
+
+        info := win.Add("Text", "x25 y" (paginationBarY + 5) " w320 c" COLORS.textDim
+            , "Page " currentPage " of " totalPages " (" total " total)")
+        info.SetFont("s9")
+
+        if (currentPage > 1) {
+            prevBtn := win.Add("Button", "x290 y" paginationBarY " w140 h35 Background" COLORS.accentHover, "← Previous")
+            prevBtn.SetFont("s9")
+            prevBtn.OnEvent("Click", (*) => ChangePage(win, -1))
+        }
+
+        if (currentPage < totalPages) {
+            nextBtn := win.Add("Button", "x585 y" paginationBarY " w140 h35 Background" COLORS.accentHover, "Next →")
+            nextBtn.SetFont("s9")
+            nextBtn.OnEvent("Click", (*) => ChangePage(win, 1))
+        }
+    }
+}
+
+
+
+
+
+
+
+CreateFullWidthCard(win, item, x, y, w, h) {
+    global COLORS
+
+    AddTracked(win, "Text", "x" x " y" y " w" w " h" h " Background" COLORS.card)
+
+    iconPath := GetMacroIcon(item.path)
+    hasIcon := false
+
+    if (iconPath && FileExist(iconPath)) {
+        try {
+            AddTracked(win, "Picture", "x" (x + 20) " y" (y + 15) " w80 h80 BackgroundTrans", iconPath)
+            hasIcon := true
+        } catch {
+            hasIcon := false
+        }
+    }
+
+    if (!hasIcon) {
+        initial := SubStr(item.info.Title, 1, 1)
+        iconColor := GetCategoryColor(item.info.Title)
+        badge := AddTracked(win, "Text", "x" (x + 20) " y" (y + 15) " w80 h80 Background" iconColor " Center", initial)
+        badge.SetFont("s32 bold c" COLORS.text)
+    }
+
+    titleCtrl := AddTracked(win, "Text", "x" (x + 120) " y" (y + 20) " w340 h28 c" COLORS.text " BackgroundTrans", item.info.Title)
+    titleCtrl.SetFont("s13 bold")
+
+    creatorCtrl := AddTracked(win, "Text", "x" (x + 120) " y" (y + 50) " w340 h20 c" COLORS.textDim " BackgroundTrans", "by " item.info.Creator)
+    creatorCtrl.SetFont("s10")
+
+    versionCtrl := AddTracked(win, "Text", "x" (x + 120) " y" (y + 75) " w60 h22 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
+    versionCtrl.SetFont("s9 bold")
+
+    runCount := GetRunCount(item.path)
+    if (runCount > 0) {
+        runCountCtrl := AddTracked(win, "Text", "x" (x + 190) " y" (y + 75) " w120 h22 c" COLORS.textDim " BackgroundTrans", "Runs: " runCount)
+        runCountCtrl.SetFont("s9")
+    }
+
+    currentPath := item.path
+    isFav := IsFavorite(currentPath)
+
+    favBtn := AddTracked(
+        win, "Button",
+        "x" (x + w - 145) " y" (y + 20) " w35 h35 Center Background" (isFav ? COLORS.favorite : COLORS.cardHover),
+        isFav ? "★" : "✰"
+    )
+    favBtn.SetFont("s18", "Segoe UI Symbol")
+    favBtn.OnEvent("Click", (*) => ToggleFavoriteAndRefresh(win, currentPath))
+
+    runBtn := AddTracked(win, "Button", "x" (x + w - 100) " y" (y + 20) " w90 h35 Background" COLORS.success, "▶ Run")
+    runBtn.SetFont("s11 bold")
+    runBtn.OnEvent("Click", (*) => RunMacro(currentPath))
+
+    if (Trim(item.info.Links) != "") {
+        currentLinks := item.info.Links
+        linksBtn := AddTracked(win, "Button", "x" (x + w - 100) " y" (y + 65) " w90 h30 Background" COLORS.accentAlt, "🔗 Links")
+        linksBtn.SetFont("s10")
+        linksBtn.OnEvent("Click", (*) => OpenLinks(currentLinks))
+    }
+}
+
+
+
+CreateGridCard(win, item, x, y, w, h) {
+    global COLORS
+
+    AddTracked(win, "Text", "x" x " y" y " w" w " h" h " Background" COLORS.card)
+
+    iconPath := GetMacroIcon(item.path)
+    hasIcon := false
+
+    if (iconPath && FileExist(iconPath)) {
+        try {
+            AddTracked(win, "Picture", "x" (x + 15) " y" (y + 15) " w60 h60 BackgroundTrans", iconPath)
+            hasIcon := true
+        } catch {
+            hasIcon := false
+        }
+    }
+
+    if (!hasIcon) {
+        initial := SubStr(item.info.Title, 1, 1)
+        iconColor := GetCategoryColor(item.info.Title)
+        badge := AddTracked(win, "Text", "x" (x + 15) " y" (y + 15) " w60 h60 Background" iconColor " Center", initial)
+        badge.SetFont("s24 bold c" COLORS.text)
+    }
+
+    titleCtrl := AddTracked(win, "Text", "x" (x + 90) " y" (y + 15) " w" (w - 190) " h26 c" COLORS.text " BackgroundTrans", item.info.Title)
+    titleCtrl.SetFont("s11 bold")
+
+    creatorCtrl := AddTracked(win, "Text", "x" (x + 90) " y" (y + 40) " w" (w - 190) " h18 c" COLORS.textDim " BackgroundTrans", "by " item.info.Creator)
+    creatorCtrl.SetFont("s9")
+
+    versionCtrl := AddTracked(win, "Text", "x" (x + 90) " y" (y + 63) " w50 h18 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
+    versionCtrl.SetFont("s8 bold")
+
+    runCount := GetRunCount(item.path)
+    if (runCount > 0) {
+        runCountCtrl := AddTracked(win, "Text", "x" (x + 150) " y" (y + 63) " w90 h18 c" COLORS.textDim " BackgroundTrans", "Runs: " runCount)
+        runCountCtrl.SetFont("s8")
+    }
+
+    currentPath := item.path
+    isFav := IsFavorite(currentPath)
+
+    favBtn := AddTracked(
+        win, "Button",
+        "x" (x + w - 110) " y" (y + 20) " w20 h20 Center Background" (isFav ? COLORS.favorite : COLORS.cardHover),
+        isFav ? "★" : "✰"
+    )
+    favBtn.SetFont("s11", "Segoe UI Symbol")
+    favBtn.OnEvent("Click", (*) => ToggleFavoriteAndRefresh(win, currentPath))
+
+    runBtn := AddTracked(win, "Button", "x" (x + w - 90) " y" (y + 15) " w80 h30 Background" COLORS.success, "▶ Run")
+    runBtn.SetFont("s10 bold")
+    runBtn.OnEvent("Click", (*) => RunMacro(currentPath))
+
+    if (Trim(item.info.Links) != "") {
+        currentLinks := item.info.Links
+        linksBtn := AddTracked(win, "Button", "x" (x + w - 90) " y" (y + 83) " w80 h22 Background" COLORS.accentAlt, "🔗 Links")
+        linksBtn.SetFont("s8")
+        linksBtn.OnEvent("Click", (*) => OpenLinks(currentLinks))
+    }
+}
+
+
+
+ChangePage(win, direction) {
+    if !win.HasProp("__data")
+        return
+
+    win.__currentPage += direction
+
+    totalPages := Ceil(win.__data.Length / win.__itemsPerPage)
+    if (totalPages < 1)
+        totalPages := 1
+
+    if (win.__currentPage < 1)
+        win.__currentPage := 1
+    if (win.__currentPage > totalPages)
+        win.__currentPage := totalPages
+
     RenderCards(win)
 }
+
+
+
+
+
+
+
+ToggleFavoriteAndRefresh(win, macroPath) {
+    ToggleFavorite(macroPath)
+
+    ; Re-sort the existing dataset if you're using favorites-first
+    if win.HasProp("__sortBy") && (win.__sortBy = "favorites") {
+        try win.__data := SortByFavorites(win.__data)
+    }
+
+    ; Just redraw in-place (DO NOT destroy/recreate window)
+    RenderCards(win)
+}
+
+
+
 
 GetMacroIcon(macroPath) {
     global BASE_DIR, ICON_DIR
@@ -3126,9 +3115,34 @@ WorkerPostPublic(endpoint, bodyJson) {
     return resp
 }
 
+TrackCtrl(win, ctrl) {
+    if !IsObject(ctrl)
+        return ctrl
+    if !win.HasProp("__cards") || !IsObject(win.__cards)
+        win.__cards := []
+    win.__cards.Push(ctrl)
+    return ctrl
+}
+
+AddTracked(win, type, options := "", text := unset) {
+    ctrl := IsSet(text) ? win.Add(type, options, text) : win.Add(type, options)
+    return TrackCtrl(win, ctrl)
+}
+
+ClearCards(win) {
+    if !win.HasProp("__cards") || !IsObject(win.__cards)
+        win.__cards := []
+
+    Loop win.__cards.Length {
+        i := win.__cards.Length - A_Index + 1
+        try win.__cards[i].Destroy()
+    }
+    win.__cards := []
+}
 ReadDiscordId() {
     global DISCORD_ID_FILE
     try if FileExist(DISCORD_ID_FILE)
         return Trim(FileRead(DISCORD_ID_FILE, "UTF-8"))
     return ""
+
 }
