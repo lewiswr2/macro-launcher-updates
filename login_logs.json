@@ -1,6 +1,24 @@
 {
   "logs": [
     {
+      "t": "2026-01-23 18:19:57",
+      "pc": "LEWIS",
+      "user": "Lewis",
+      "discordId": "1247055057489231914",
+      "hwid": "1525703921",
+      "role": "user",
+      "loginUser": "V1LNClan@discord"
+    },
+    {
+      "t": "2026-01-23 18:19:17",
+      "pc": "LEWIS",
+      "user": "Lewis",
+      "discordId": "1247055057489231914",
+      "hwid": "1525703921",
+      "role": "user",
+      "loginUser": "V1LNClan@discord"
+    },
+    {
       "t": "2026-01-19 14:35:25",
       "pc": "LEWIS",
       "user": "Lewis",
