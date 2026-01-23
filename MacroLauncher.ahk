@@ -524,7 +524,7 @@ CheckForUpdatesPrompt() {
         . "Latest: " manifest.version "`n`n"
         . "What's new:`n" changelogText "`n"
         . "Do you want to update now?",
-        "V1LN clan Update",
+        "V1LN Clan Update",
         "YesNo Iconi"
     )
     if (choice = "No")
@@ -1033,7 +1033,7 @@ CreateMainGui() {
 
 
 
-    titleText := mainGui.Add("Text", "x85 y17 w280 h100 c" COLORS.text " BackgroundTrans", " V1LN clan")
+    titleText := mainGui.Add("Text", "x85 y17 w280 h100 c" COLORS.text " BackgroundTrans", " V1LN Clan")
     titleText.SetFont("s24 bold")
 
     btnNuke := mainGui.Add("Button", "x290 y25 w75 h35 Background" COLORS.danger, "Uninstall")
@@ -1869,13 +1869,13 @@ ReadMacroInfo(macroDir) {
 
 ; 1. ADD THIS FUNCTION (from Public Release)
 OnSetGlobalPassword(defaultUser, *) {
-    pw := InputBox("Enter NEW universal password (this pushes to global manifest).", "V1LN clan - Set Global Password", "Password w560 h190")
+    pw := InputBox("Enter NEW universal password (this pushes to global manifest).", "V1LN Clan - Set Global Password", "Password w560 h190")
     if (pw.Result != "OK")
         return
 
     newPass := Trim(pw.Value)
     if (newPass = "") {
-        MsgBox "Password cannot be blank.", "V1LN clan - Invalid", "Icon! 0x30"
+        MsgBox "Password cannot be blank.", "V1LN Clan - Invalid", "Icon! 0x30"
         return
     }
 
@@ -1884,9 +1884,9 @@ OnSetGlobalPassword(defaultUser, *) {
 
     try {
         WorkerPost("/cred/set", body)
-        MsgBox "✅ Global password updated in manifest.`n`nNew cred_hash: " h, "V1LN clan", "Iconi"
+        MsgBox "✅ Global password updated in manifest.`n`nNew cred_hash: " h, "V1LN Clan", "Iconi"
     } catch as err {
-        MsgBox "❌ Failed to set global password:`n" err.Message, "V1LN clan", "Icon! 0x10"
+        MsgBox "❌ Failed to set global password:`n" err.Message, "V1LN Clan", "Icon! 0x10"
     }
 }
 
@@ -1910,7 +1910,7 @@ HashPassword(password) {
 CopyManifestCredentialSnippet(username) {
     pw := InputBox(
         "Enter the NEW universal password.`n`nThis will copy cred_user + cred_hash for manifest.json.",
-        "V1LN clan - Generate manifest snippet",
+        "V1LN Clan - Generate manifest snippet",
         "Password w560 h190"
     )
     if (pw.Result != "OK")
@@ -1918,7 +1918,7 @@ CopyManifestCredentialSnippet(username) {
 
     newPass := Trim(pw.Value)
     if (newPass = "") {
-        MsgBox "Password cannot be blank.", "V1LN clan - Invalid", "Icon! 0x30"
+        MsgBox "Password cannot be blank.", "V1LN Clan - Invalid", "Icon! 0x30"
         return
     }
 
@@ -1926,7 +1926,7 @@ CopyManifestCredentialSnippet(username) {
     snippet := '"cred_user": "' username '",' "`n" '"cred_hash": "' h '"'
     A_Clipboard := snippet
 
-    MsgBox "✅ Copied to clipboard.`n`nPaste into manifest.json:`n`n" snippet, "V1LN clan", "Iconi"
+    MsgBox "✅ Copied to clipboard.`n`nPaste into manifest.json:`n`n" snippet, "V1LN Clan", "Iconi"
 }
 
 RunMacro(path) {
@@ -2236,7 +2236,7 @@ ShowUpdateFail(context, err, extra := "") {
         . "A_WorkingDir: " A_WorkingDir "`n"
         . "AppData: " A_AppData
 
-    MsgBox msg, "V1LN clan - Update Failed", "Icon! 0x10"
+    MsgBox msg, "V1LN Clan - Update Failed", "Icon! 0x10"
 }
 
 IsValidZip(path) {
@@ -2445,15 +2445,15 @@ AdminPanel(*) {
     
     FetchMasterKeyFromManifest()
     
-    ib := InputBox("Enter MASTER KEY to open Admin Panel:", "V1LN clan - Admin Panel", "Password w460 h170")
+    ib := InputBox("Enter MASTER KEY to open Admin Panel:", "V1LN Clan - Admin Panel", "Password w460 h170")
     if (ib.Result != "OK")
         return
     if (Trim(ib.Value) != MASTER_KEY) {
-        MsgBox "❌ Invalid master key.", "V1LN clan - Access Denied", "Icon! 0x10"
+        MsgBox "❌ Invalid master key.", "V1LN Clan - Access Denied", "Icon! 0x10"
         return
     }
     
-    adminGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "V1LN clan - Admin Panel")
+    adminGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "V1LN Clan - Admin Panel")
     adminGui.BackColor := COLORS.bg
     adminGui.SetFont("s9 c" COLORS.text, "Segoe UI")
     
@@ -2552,16 +2552,16 @@ OnClearLog(lv, *) {
     try {
         WorkerPost("/logs/clear", "{}")
         LoadGlobalSessionLogIntoListView(lv, 200)
-        MsgBox "✅ Global login log cleared.", "V1LN clan - Admin", "Iconi"
+        MsgBox "✅ Global login log cleared.", "V1LN Clan - Admin", "Iconi"
     } catch as err {
-        MsgBox "❌ Clear failed:`n" err.Message, "V1LN clan - Admin", "Icon!"
+        MsgBox "❌ Clear failed:`n" err.Message, "V1LN Clan - Admin", "Icon!"
     }
 }
 
 OnBanDiscordId(banEdit, bannedLbl, *) {
     did := Trim(banEdit.Value)
     if (did = "" || !RegExMatch(did, "^\d{6,30}$")) {
-        MsgBox "Enter a valid Discord ID (numbers only).", "V1LN clan - Admin", "Icon!"
+        MsgBox "Enter a valid Discord ID (numbers only).", "V1LN Clan - Admin", "Icon!"
         return
     }
 
@@ -2569,9 +2569,9 @@ OnBanDiscordId(banEdit, bannedLbl, *) {
         WorkerPost("/ban", '{"discord_id":"' did '"}')
         AddBannedDiscordId(did)
         RefreshBannedFromServer(bannedLbl)
-        MsgBox "✅ Globally BANNED: " did, "V1LN clan - Admin", "Iconi"
+        MsgBox "✅ Globally BANNED: " did, "V1LN Clan - Admin", "Iconi"
     } catch as err {
-        MsgBox "❌ Failed to ban globally:`n" err.Message, "V1LN clan - Admin", "Icon!"
+        MsgBox "❌ Failed to ban globally:`n" err.Message, "V1LN Clan - Admin", "Icon!"
     }
 }
 
@@ -2580,7 +2580,7 @@ OnUnbanDiscordId(banEdit, bannedLbl, *) {
     did := RegExReplace(did, "[^\d]", "")
 
     if (did = "" || !RegExMatch(did, "^\d{6,30}$")) {
-        MsgBox "Enter a valid Discord ID (numbers only).", "V1LN clan - Admin", "Icon!"
+        MsgBox "Enter a valid Discord ID (numbers only).", "V1LN Clan - Admin", "Icon!"
         return
     }
 
@@ -2608,19 +2608,19 @@ OnUnbanDiscordId(banEdit, bannedLbl, *) {
         }
 
         if stillThere {
-            MsgBox "⚠️ Unban request sent, but ID is STILL in global manifest (GitHub may be caching/lagging).`n`nID: " did, "V1LN clan - Admin", "Icon! 0x30"
+            MsgBox "⚠️ Unban request sent, but ID is STILL in global manifest (GitHub may be caching/lagging).`n`nID: " did, "V1LN Clan - Admin", "Icon! 0x30"
         } else {
-            MsgBox "✅ Globally UNBANNED: " did, "V1LN clan - Admin", "Iconi"
+            MsgBox "✅ Globally UNBANNED: " did, "V1LN Clan - Admin", "Iconi"
         }
     } catch as err {
-        MsgBox "❌ Failed to unban globally:`n" err.Message, "V1LN clan - Admin", "Icon!"
+        MsgBox "❌ Failed to unban globally:`n" err.Message, "V1LN Clan - Admin", "Icon!"
     }
 }
 
 OnAddAdminDiscord(adminEdit, adminLbl, *) {
     did := Trim(adminEdit.Value)
     if (did = "" || !RegExMatch(did, "^\d{6,30}$")) {
-        MsgBox "Enter a valid Discord ID (numbers only).", "V1LN clan - Admin", "Icon!"
+        MsgBox "Enter a valid Discord ID (numbers only).", "V1LN Clan - Admin", "Icon!"
         return
     }
 
@@ -2628,16 +2628,16 @@ OnAddAdminDiscord(adminEdit, adminLbl, *) {
         WorkerPost("/admin/add", '{"discord_id":"' did '"}')
         AddAdminDiscordId(did)
         RefreshAdminDiscordLabel(adminLbl)
-        MsgBox "✅ Globally added admin: " did, "V1LN clan - Admin", "Iconi"
+        MsgBox "✅ Globally added admin: " did, "V1LN Clan - Admin", "Iconi"
     } catch as err {
-        MsgBox "❌ Failed to add admin globally:`n" err.Message, "V1LN clan - Admin", "Icon!"
+        MsgBox "❌ Failed to add admin globally:`n" err.Message, "V1LN Clan - Admin", "Icon!"
     }
 }
 
 OnRemoveAdminDiscord(adminEdit, adminLbl, *) {
     did := Trim(adminEdit.Value)
     if (did = "" || !RegExMatch(did, "^\d{6,30}$")) {
-        MsgBox "Enter a valid Discord ID (numbers only).", "V1LN clan - Admin", "Icon!"
+        MsgBox "Enter a valid Discord ID (numbers only).", "V1LN Clan - Admin", "Icon!"
         return
     }
 
@@ -2645,9 +2645,9 @@ OnRemoveAdminDiscord(adminEdit, adminLbl, *) {
         WorkerPost("/admin/remove", '{"discord_id":"' did '"}')
         RemoveAdminDiscordId(did)
         RefreshAdminDiscordLabel(adminLbl)
-        MsgBox "✅ Globally removed admin: " did, "V1LN clan - Admin", "Iconi"
+        MsgBox "✅ Globally removed admin: " did, "V1LN Clan - Admin", "Iconi"
     } catch as err {
-        MsgBox "❌ Failed to remove admin globally:`n" err.Message, "V1LN clan - Admin", "Icon!"
+        MsgBox "❌ Failed to remove admin globally:`n" err.Message, "V1LN Clan - Admin", "Icon!"
     }
 }
 
@@ -2824,7 +2824,7 @@ OnBanHwid(hwidEdit, bannedHwidLbl, *) {
     try {
         hwidValue := hwidEdit.Value
     } catch {
-        MsgBox "Failed to read HWID from edit control.", "V1LN clan - Admin", "Icon!"
+        MsgBox "Failed to read HWID from edit control.", "V1LN Clan - Admin", "Icon!"
         return
     }
     
@@ -2833,7 +2833,7 @@ OnBanHwid(hwidEdit, bannedHwidLbl, *) {
     hwid := RegExReplace(hwid, "[^\d]", "")
     
     if (hwid = "") {
-        MsgBox "Enter a valid HWID (numbers only).", "V1LN clan - Admin", "Icon!"
+        MsgBox "Enter a valid HWID (numbers only).", "V1LN Clan - Admin", "Icon!"
         return
     }
     
@@ -2846,9 +2846,9 @@ OnBanHwid(hwidEdit, bannedHwidLbl, *) {
         catch
         
         RefreshBannedHwidLabel(bannedHwidLbl)
-        MsgBox "✅ Globally BANNED HWID: " hwid, "V1LN clan - Admin", "Iconi"
+        MsgBox "✅ Globally BANNED HWID: " hwid, "V1LN Clan - Admin", "Iconi"
     } catch as err {
-        MsgBox "❌ Failed to ban HWID globally:`n" err.Message, "V1LN clan - Admin", "Icon!"
+        MsgBox "❌ Failed to ban HWID globally:`n" err.Message, "V1LN Clan - Admin", "Icon!"
     }
 }
 
@@ -2858,7 +2858,7 @@ OnUnbanHwid(hwidEdit, bannedHwidLbl, *) {
     try {
         hwidValue := hwidEdit.Value
     } catch {
-        MsgBox "Failed to read HWID from edit control.", "V1LN clan - Admin", "Icon!"
+        MsgBox "Failed to read HWID from edit control.", "V1LN Clan - Admin", "Icon!"
         return
     }
     
@@ -2867,7 +2867,7 @@ OnUnbanHwid(hwidEdit, bannedHwidLbl, *) {
     hwid := RegExReplace(hwid, "[^\d]", "")
     
     if (hwid = "") {
-        MsgBox "Enter a valid HWID (numbers only).", "V1LN clan - Admin", "Icon!"
+        MsgBox "Enter a valid HWID (numbers only).", "V1LN Clan - Admin", "Icon!"
         return
     }
     
@@ -2880,9 +2880,9 @@ OnUnbanHwid(hwidEdit, bannedHwidLbl, *) {
         catch
         
         RefreshBannedHwidLabel(bannedHwidLbl)
-        MsgBox "✅ Globally UNBANNED HWID: " hwid, "V1LN clan - Admin", "Iconi"
+        MsgBox "✅ Globally UNBANNED HWID: " hwid, "V1LN Clan - Admin", "Iconi"
     } catch as err {
-        MsgBox "❌ Failed to unban HWID globally:`n" err.Message, "V1LN clan - Admin", "Icon!"
+        MsgBox "❌ Failed to unban HWID globally:`n" err.Message, "V1LN Clan - Admin", "Icon!"
     }
 }
 
@@ -3166,7 +3166,7 @@ SendDiscordLogin_Test(customWebhookUrl) {
 
     ; Example message in your style (matches what you showed)
     msg := header
-        . "👤 V1LN clan - User Startup (Non-Admin)`n`n"
+        . "👤 V1LN Clan - User Startup (Non-Admin)`n`n"
         . "Time: " ts "`n"
         . "PC: " A_ComputerName "`n"
         . "User: " A_UserName "`n"
