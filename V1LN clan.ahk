@@ -5,7 +5,7 @@
 
 
 
-global LAUNCHER_VERSION := "1.0.1"
+global LAUNCHER_VERSION := "1.0.2"
 
 ; ================= AUTHENTICATION GLOBALS =================
 global WORKER_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/"
