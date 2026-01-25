@@ -244,22 +244,6 @@ LoadFavorities() {
     }
 }
 
-SaveFavorites() {
-    global favorites, FAVORITES_FILE
-    
-    try {
-        json := FavoritesToJSON(favorites)
-        if FileExist(FAVORITES_FILE)
-            FileDelete FAVORITES_FILE
-        FileAppend json, FAVORITES_FILE, "UTF-8"
-    } catch {
-    }
-}
-
-GetMacroKey(macroPath) {
-    return StrReplace(StrReplace(macroPath, "\", "_"), ":", "")
-}
-
 IncrementRunCount(macroPath) {
     global macroStats
     
@@ -288,27 +272,6 @@ GetRunCount(macroPath) {
     return 0
 }
 
-ToggleFavorite(macroPath) {
-    global favorites
-    key := GetMacroKey(macroPath)
-    
-    if favorites.Has(key)
-        favorites.Delete(key)
-    else
-        favorites[key] := {
-            path: macroPath,
-            addedAt: A_Now
-        }
-    
-    SaveFavorites()
-}
-
-IsFavorite(macroPath) {
-    global favorites
-    key := GetMacroKey(macroPath)
-    return favorites.Has(key)
-}
-
 StatsToJSON(statsMap) {
     if statsMap.Count = 0
         return "{}"
@@ -321,22 +284,6 @@ StatsToJSON(statsMap) {
         firstRun := EscapeJSON(data.firstRun)
         
         pairs.Push('"' keyStr '":{"runCount":' runCount ',"lastRun":"' lastRun '","firstRun":"' firstRun '"}')
-    }
-    
-    return "{" StrJoin(pairs, ",") "}"
-}
-
-FavoritesToJSON(favMap) {
-    if favMap.Count = 0
-        return "{}"
-    
-    pairs := []
-    for key, data in favMap {
-        keyStr := EscapeJSON(key)
-        path := EscapeJSON(data.path)
-        addedAt := EscapeJSON(data.addedAt)
-        
-        pairs.Push('"' keyStr '":{"path":"' path '","addedAt":"' addedAt '"}')
     }
     
     return "{" StrJoin(pairs, ",") "}"
@@ -384,103 +331,6 @@ ParseStatsJSON(json) {
         return Map()
     }
     
-    return result
-}
-
-ParseFavoritesJSON(json) {
-    result := Map()
-    
-    if !json || json = "{}"
-        return result
-    
-    try {
-        content := Trim(SubStr(json, 2, StrLen(json) - 2))
-        entries := SplitTopLevel(content)
-        
-        for entry in entries {
-            if !InStr(entry, ":")
-                continue
-            
-            if !RegExMatch(entry, '"([^"]+)":\s*{', &m)
-                continue
-            
-            key := m[1]
-            
-            path := ""
-            addedAt := ""
-            
-            if RegExMatch(entry, '"path"\s*:\s*"([^"]+)"', &m2)
-                path := UnescapeJSON(m2[1])
-            
-            if RegExMatch(entry, '"addedAt"\s*:\s*"([^"]+)"', &m3)
-                addedAt := m3[1]
-            
-            if path != ""
-                result[key] := {
-                    path: path,
-                    addedAt: addedAt
-                }
-        }
-    } catch {
-        return Map()
-    }
-    
-    return result
-}
-
-SplitTopLevel(str) {
-    result := []
-    depth := 0
-    current := ""
-    
-    Loop Parse, str {
-        char := A_LoopField
-        
-        if (char = "{")
-            depth++
-        else if (char = "}")
-            depth--
-        
-        if (char = "," && depth = 0) {
-            if (Trim(current) != "")
-                result.Push(Trim(current))
-            current := ""
-        } else {
-            current .= char
-        }
-    }
-    
-    if (Trim(current) != "")
-        result.Push(Trim(current))
-    
-    return result
-}
-
-EscapeJSON(str) {
-    str := StrReplace(str, "\", "\\")
-    str := StrReplace(str, '"', '\"')
-    str := StrReplace(str, "`n", "\n")
-    str := StrReplace(str, "`r", "\r")
-    str := StrReplace(str, "`t", "\t")
-    return str
-}
-
-UnescapeJSON(str) {
-    str := StrReplace(str, "\\", "\")
-    str := StrReplace(str, '\"', '"')
-    str := StrReplace(str, "\n", "`n")
-    str := StrReplace(str, "\r", "`r")
-    str := StrReplace(str, "\t", "`t")
-    return str
-}
-
-StrJoin(arr, delim) {
-    result := ""
-    for item in arr {
-        if (result != "")
-            result .= delim
-        result .= item
-    }
     return result
 }
 
@@ -1029,10 +879,6 @@ CreateMainGui() {
         }
     }
     
-
-
-
-
     titleText := mainGui.Add("Text", "x85 y17 w280 h100 c" COLORS.text " BackgroundTrans", " V1LN Clan")
     titleText.SetFont("s24 bold")
 
@@ -1212,105 +1058,6 @@ SafeOpenURL(url) {
     }
 }
 
-; ========== CATEGORY VIEW ==========
-
-OpenCategory(category) {
-    global COLORS, BASE_DIR, gCategoryWindows
-
-    ; If window already exists, just bring it to front + refresh data
-    if (gCategoryWindows.Has(category)) {
-        try {
-            win := gCategoryWindows[category]
-            if WinExist("ahk_id " win.Hwnd) {
-                win.__data := GetMacrosWithInfo(category, win.HasProp("__sortBy") ? win.__sortBy : "favorites")
-                RenderCards(win)
-                win.Show()
-                WinActivate("ahk_id " win.Hwnd)
-                return
-            }
-        } catch {
-            ; fall through and recreate
-        }
-        try gCategoryWindows.Delete(category)
-    }
-
-    macros := GetMacrosWithInfo(category)
-
-    if (macros.Length = 0) {
-        MsgBox(
-            "No macros found in '" category "'`n`n"
-            "To add macros:`n"
-            "1. Create a 'Main.ahk' file in each subfolder`n"
-            "2. Or run the update to download macros",
-            "No Macros",
-            "Iconi"
-        )
-        return
-    }
-
-    win := Gui("-Resize +Border", category " - Macros")
-    win.BackColor := COLORS.bg
-    win.SetFont("s10", "Segoe UI")
-
-    ; Store in global map so we never open duplicates
-    gCategoryWindows[category] := win
-
-    win.__data := macros
-    win.__cards := []
-    win.__currentPage := 1
-    win.__itemsPerPage := 8
-    win.__sortBy := "favorites"
-    win.__category := category
-
-    gameIcon := GetGameIcon(category)
-    if (gameIcon && FileExist(gameIcon)) {
-        try {
-            win.Show("Hide")
-            win.Opt("+Icon" gameIcon)
-        }
-    }
-
-    ; Header (static controls)
-    win.Add("Text", "x0 y0 w750 h90 Background" COLORS.accent)
-
-    backBtn := win.Add("Button", "x20 y25 w70 h35 Background" COLORS.accentHover, "← Back")
-    backBtn.SetFont("s10")
-    backBtn.OnEvent("Click", (*) => win.Destroy())
-
-    title := win.Add("Text", "x105 y20 w400 h100 c" COLORS.text " BackgroundTrans", category)
-    title.SetFont("s22 bold")
-
-    sortLabel := win.Add("Text", "x530 y25 w60 c" COLORS.text " BackgroundTrans", "Sort by:")
-    sortLabel.SetFont("s9")
-
-    sortDDL := win.Add("DropDownList", "x530 y45 w200 Background" COLORS.card " c" COLORS.text,
-        ["⭐ Favorites First", "🔤 Name (A-Z)", "🔤 Name (Z-A)", "📊 Most Used", "📊 Least Used", "📅 Recently Added"])
-    sortDDL.SetFont("s9")
-    sortDDL.Choose(1)
-; ===== Scroll settings =====
-win.__viewTop := 110
-win.__viewBottom := 610   ; bottom of visible area
-win.__scrollItems := []
-win.__contentTop := win.__viewTop
-win.__scrollBar := win.Add("Slider"
-    , "x725 y" win.__viewTop " w20 h" (win.__viewBottom - win.__viewTop) " Vertical ToolTip Range0-0"
-)
-win.__scrollBar.OnEvent("Change", (*) => ApplyCardScroll(win))
-; Mask strip to prevent cards showing behind header when scrolling
-win.__mask := win.Add("Text", "x0 y90 w750 h25 Background" COLORS.bg)
-
-
-    ; When the window closes, remove it from map
-    win.OnEvent("Close", (*) => (gCategoryWindows.Has(category) ? gCategoryWindows.Delete(category) : 0))
-
-RenderCards(win)
-ApplyCardScroll(win)
-EnsureHeaderMask(win)
-
-win.Show("w750 h640 Center")
-
-}
-
 EnsureHeaderMask(win) {
     global COLORS
     if !win.HasProp("__mask") || !IsObject(win.__mask) {
@@ -1332,220 +1079,6 @@ OpenCategoryWithSort(category, sortBy := "favorites") {
         RenderCards(win)
     }
 }
-
-RenderCards(win) {
-    global COLORS
-
-    if !win.HasProp("__data")
-        return
-
-    macros := win.__data
-    total := macros.Length
-
-    ; Clear old cards ONLY (does not touch header or scrollbar)
-    ClearCards(win)
-
-    ; Layout
-    leftX := 25
-    gridTopY := win.HasProp("__viewTop") ? win.__viewTop : 110
-    win.__contentTop := gridTopY
-
-    cardWidth := 340
-    cardHeight := 110
-    spacingX := 20
-    spacingY := 20
-    cols := 2
-
-    if (total = 0) {
-        t := AddTracked(win, "Text", "x" leftX " y" gridTopY " w700 h100 c" COLORS.textDim " Center", "No macros found")
-        t.SetFont("s10")
-        SetupScrollRange(win, gridTopY, gridTopY)
-        return
-    }
-
-    ; Draw ALL items (no pagination)
-    for idx, item in macros {
-        col := Mod(idx - 1, cols)
-        row := Floor((idx - 1) / cols)
-
-        xPos := leftX + (col * (cardWidth + spacingX))
-        yPos := gridTopY + (row * (cardHeight + spacingY))
-
-        CreateGridCard(win, item, xPos, yPos, cardWidth, cardHeight)
-    }
-
-    rows := Ceil(total / cols)
-    contentBottom := gridTopY + (rows * cardHeight) + ((rows - 1) * spacingY)
-
-    SetupScrollRange(win, gridTopY, contentBottom)
-    ApplyCardScroll(win)
-}
-
-
-
-
-
-
-
-CreateFullWidthCard(win, item, x, y, w, h) {
-    global COLORS
-
-    AddTracked(win, "Text", "x" x " y" y " w" w " h" h " Background" COLORS.card)
-
-    iconPath := GetMacroIcon(item.path)
-    hasIcon := false
-
-    if (iconPath && FileExist(iconPath)) {
-        try {
-            AddTracked(win, "Picture", "x" (x + 20) " y" (y + 15) " w80 h80 BackgroundTrans", iconPath)
-            hasIcon := true
-        } catch {
-            hasIcon := false
-        }
-    }
-
-    if (!hasIcon) {
-        initial := SubStr(item.info.Title, 1, 1)
-        iconColor := GetCategoryColor(item.info.Title)
-        badge := AddTracked(win, "Text", "x" (x + 20) " y" (y + 15) " w80 h80 Background" iconColor " Center", initial)
-        badge.SetFont("s32 bold c" COLORS.text)
-    }
-
-    titleCtrl := AddTracked(win, "Text", "x" (x + 120) " y" (y + 20) " w340 h28 c" COLORS.text " BackgroundTrans", item.info.Title)
-    titleCtrl.SetFont("s13 bold")
-
-    creatorCtrl := AddTracked(win, "Text", "x" (x + 120) " y" (y + 50) " w340 h20 c" COLORS.textDim " BackgroundTrans", "by " item.info.Creator)
-    creatorCtrl.SetFont("s10")
-
-    versionCtrl := AddTracked(win, "Text", "x" (x + 120) " y" (y + 75) " w60 h22 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
-    versionCtrl.SetFont("s9 bold")
-
-    runCount := GetRunCount(item.path)
-    if (runCount > 0) {
-        runCountCtrl := AddTracked(win, "Text", "x" (x + 190) " y" (y + 75) " w120 h22 c" COLORS.textDim " BackgroundTrans", "Runs: " runCount)
-        runCountCtrl.SetFont("s9")
-    }
-
-    currentPath := item.path
-    isFav := IsFavorite(currentPath)
-
-    favBtn := AddTracked(
-        win, "Button",
-        "x" (x + w - 145) " y" (y + 20) " w35 h35 Center Background" (isFav ? COLORS.favorite : COLORS.cardHover),
-        isFav ? "★" : "✰"
-    )
-    favBtn.SetFont("s18", "Segoe UI Symbol")
-    favBtn.OnEvent("Click", (*) => ToggleFavoriteAndRefresh(win, currentPath))
-
-    runBtn := AddTracked(win, "Button", "x" (x + w - 100) " y" (y + 20) " w90 h35 Background" COLORS.success, "▶ Run")
-    runBtn.SetFont("s11 bold")
-    runBtn.OnEvent("Click", (*) => RunMacro(currentPath))
-
-    if (Trim(item.info.Links) != "") {
-        currentLinks := item.info.Links
-        linksBtn := AddTracked(win, "Button", "x" (x + w - 100) " y" (y + 65) " w90 h30 Background" COLORS.accentAlt, "🔗 Links")
-        linksBtn.SetFont("s10")
-        linksBtn.OnEvent("Click", (*) => OpenLinks(currentLinks))
-    }
-}
-
-
-
-CreateGridCard(win, item, x, y, w, h) {
-    global COLORS
-
-    AddTracked(win, "Text", "x" x " y" y " w" w " h" h " Background" COLORS.card)
-
-    iconPath := GetMacroIcon(item.path)
-    hasIcon := false
-FileAppend(
-    "TITLE=" item.info.Title
-    . " | FOLDERPATH=" item.path
-    . " | ICON=" iconPath
-    . " | EXISTS=" (FileExist(iconPath) ? "YES" : "NO")
-    . "`n",
-    A_Temp "\icon_debug.txt"
-)
-
-
-    if (iconPath && FileExist(iconPath)) {
-        try {
-            AddTracked(win, "Picture", "x" (x + 15) " y" (y + 15) " w60 h60 BackgroundTrans", iconPath)
-            hasIcon := true
-        } catch {
-            hasIcon := false
-        }
-    }
-
-    if (!hasIcon) {
-        initial := SubStr(item.info.Title, 1, 1)
-        iconColor := GetCategoryColor(item.info.Title)
-        badge := AddTracked(win, "Text", "x" (x + 15) " y" (y + 15) " w60 h60 Background" iconColor " Center", initial)
-        badge.SetFont("s24 bold c" COLORS.text)
-    }
-
-    titleCtrl := AddTracked(win, "Text", "x" (x + 90) " y" (y + 15) " w" (w - 190) " h26 c" COLORS.text " BackgroundTrans", item.info.Title)
-    titleCtrl.SetFont("s11 bold")
-
-    creatorCtrl := AddTracked(win, "Text", "x" (x + 90) " y" (y + 40) " w" (w - 190) " h18 c" COLORS.textDim " BackgroundTrans", "by " item.info.Creator)
-    creatorCtrl.SetFont("s9")
-
-    versionCtrl := AddTracked(win, "Text", "x" (x + 90) " y" (y + 63) " w50 h18 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
-    versionCtrl.SetFont("s8 bold")
-
-    runCount := GetRunCount(item.path)
-    if (runCount > 0) {
-        runCountCtrl := AddTracked(win, "Text", "x" (x + 150) " y" (y + 63) " w90 h18 c" COLORS.textDim " BackgroundTrans", "Runs: " runCount)
-        runCountCtrl.SetFont("s8")
-    }
-
-    currentPath := item.path
-    isFav := IsFavorite(currentPath)
-
-    favBtn := AddTracked(
-        win, "Button",
-        "x" (x + w - 110) " y" (y + 20) " w20 h20 Center Background" (isFav ? COLORS.favorite : COLORS.cardHover),
-        isFav ? "★" : "✰"
-    )
-    favBtn.SetFont("s11", "Segoe UI Symbol")
-    favBtn.OnEvent("Click", (*) => ToggleFavoriteAndRefresh(win, currentPath))
-
-    runBtn := AddTracked(win, "Button", "x" (x + w - 90) " y" (y + 15) " w80 h30 Background" COLORS.success, "▶ Run")
-    runBtn.SetFont("s10 bold")
-    runBtn.OnEvent("Click", (*) => RunMacro(currentPath))
-
-    if (Trim(item.info.Links) != "") {
-        currentLinks := item.info.Links
-        linksBtn := AddTracked(win, "Button", "x" (x + w - 90) " y" (y + 83) " w80 h22 Background" COLORS.accentAlt, "🔗 Links")
-        linksBtn.SetFont("s8")
-        linksBtn.OnEvent("Click", (*) => OpenLinks(currentLinks))
-    }
-}
-
-
-
-
-
-
-
-
-
-
-
-ToggleFavoriteAndRefresh(win, macroPath) {
-    ToggleFavorite(macroPath)
-
-    ; Re-sort the existing dataset if you're using favorites-first
-    if win.HasProp("__sortBy") && (win.__sortBy = "favorites") {
-        try win.__data := SortByFavorites(win.__data)
-    }
-
-    ; Just redraw in-place (DO NOT destroy/recreate window)
-    RenderCards(win)
-}
-
-
-
 
 GetMacroIcon(macroPath) {
     global BASE_DIR, ICON_DIR
@@ -1642,145 +1175,6 @@ out.Push({
     }
     
     return out
-}
-
-SortByFavorites(macros) {
-    favs := []
-    nonFavs := []
-    
-    for item in macros {
-        if IsFavorite(item.path)
-            favs.Push(item)
-        else
-            nonFavs.Push(item)
-    }
-    
-    sorted := []
-    for item in favs
-        sorted.Push(item)
-    for item in nonFavs
-        sorted.Push(item)
-    
-    return sorted
-}
-
-SortByName(macros, ascending := true) {
-    if (macros.Length <= 1)
-        return macros
-    
-    sorted := macros.Clone()
-    
-    Loop sorted.Length - 1 {
-        i := A_Index
-        Loop sorted.Length - i {
-            j := A_Index + i
-            
-            ; Safely get titles with error handling
-            titleI := ""
-            titleJ := ""
-            
-            try {
-                if IsObject(sorted[i]) && IsObject(sorted[i].info) && sorted[i].info.HasProp("Title")
-                    titleI := sorted[i].info.Title
-            }
-            
-            try {
-                if IsObject(sorted[j]) && IsObject(sorted[j].info) && sorted[j].info.HasProp("Title")
-                    titleJ := sorted[j].info.Title
-            }
-            
-            if (titleI = "" || titleJ = "")
-                continue
-            
-            ; Use StrCompare for string comparison
-            comparison := StrCompare(StrLower(titleI), StrLower(titleJ))
-            
-            if ascending {
-                if (comparison > 0) {
-                    temp := sorted[i]
-                    sorted[i] := sorted[j]
-                    sorted[j] := temp
-                }
-            } else {
-                if (comparison < 0) {
-                    temp := sorted[i]
-                    sorted[i] := sorted[j]
-                    sorted[j] := temp
-                }
-            }
-        }
-    }
-    
-    return sorted
-}
-
-SortByRuns(macros, ascending := true) {
-    if (macros.Length <= 1)
-        return macros
-    
-    sorted := macros.Clone()
-    
-    Loop sorted.Length - 1 {
-        i := A_Index
-        Loop sorted.Length - i {
-            j := A_Index + i
-            
-            runI := 0
-            runJ := 0
-            
-            try {
-                if IsObject(sorted[i]) && sorted[i].HasProp("path")
-                    runI := GetRunCount(sorted[i].path)
-            }
-            
-            try {
-                if IsObject(sorted[j]) && sorted[j].HasProp("path")
-                    runJ := GetRunCount(sorted[j].path)
-            }
-            
-            if ascending {
-                if (runI > runJ) {
-                    temp := sorted[i]
-                    sorted[i] := sorted[j]
-                    sorted[j] := temp
-                }
-            } else {
-                if (runI < runJ) {
-                    temp := sorted[i]
-                    sorted[i] := sorted[j]
-                    sorted[j] := temp
-                }
-            }
-        }
-    }
-    
-    return sorted
-}
-
-SortByRecent(macros) {
-    global favorites
-    sorted := macros.Clone()
-    
-    Loop sorted.Length - 1 {
-        i := A_Index
-        Loop sorted.Length - i {
-            j := A_Index + i
-            
-            keyI := GetMacroKey(sorted[i].path)
-            keyJ := GetMacroKey(sorted[j].path)
-            
-            timeI := favorites.Has(keyI) ? favorites[keyI].addedAt : "0"
-            timeJ := favorites.Has(keyJ) ? favorites[keyJ].addedAt : "0"
-            
-            if (timeI < timeJ) {
-                temp := sorted[i]
-                sorted[i] := sorted[j]
-                sorted[j] := temp
-            }
-        }
-    }
-    
-    return sorted
 }
 
 JsonLoad(jsonText) {
@@ -3449,3 +2843,630 @@ RunUtilityButton(path, name) {
     }
 }
 
+; ========== FAVORITES SYSTEM ==========
+
+global favorites := Map()
+global FAVORITES_FILE := ""
+
+LoadFavorites() {
+    global favorites, FAVORITES_FILE
+    
+    if !FileExist(FAVORITES_FILE) {
+        favorites := Map()
+        return
+    }
+    
+    try {
+        json := FileRead(FAVORITES_FILE, "UTF-8")
+        parsed := ParseFavoritesJSON(json)
+        if parsed
+            favorites := parsed
+        else
+            favorites := Map()
+    } catch {
+        favorites := Map()
+    }
+}
+
+SaveFavorites() {
+    global favorites, FAVORITES_FILE
+    
+    try {
+        json := FavoritesToJSON(favorites)
+        if FileExist(FAVORITES_FILE)
+            FileDelete FAVORITES_FILE
+        FileAppend json, FAVORITES_FILE, "UTF-8"
+    } catch {
+    }
+}
+
+GetMacroKey(macroPath) {
+    try {
+        SplitPath macroPath, , &macroDir
+        SplitPath macroDir, &folderName, &parentDir
+        SplitPath parentDir, &categoryName
+        
+        key := categoryName "_" folderName
+        key := StrReplace(key, " ", "_")
+        key := StrReplace(key, "\", "_")
+        key := StrReplace(key, ":", "")
+        key := StrReplace(key, "/", "_")
+        key := RegExReplace(key, "[^a-zA-Z0-9_-]", "")
+        
+        return key
+    } catch {
+        key := StrReplace(StrReplace(macroPath, "\", "_"), ":", "")
+        return RegExReplace(key, "[^a-zA-Z0-9_-]", "")
+    }
+}
+
+ToggleFavorite(macroPath) {
+    global favorites
+    key := GetMacroKey(macroPath)
+    
+    if favorites.Has(key)
+        favorites.Delete(key)
+    else
+        favorites[key] := {
+            path: macroPath,
+            addedAt: A_Now
+        }
+    
+    SaveFavorites()
+}
+
+IsFavorite(macroPath) {
+    global favorites
+    key := GetMacroKey(macroPath)
+    return favorites.Has(key)
+}
+
+FavoritesToJSON(favMap) {
+    if favMap.Count = 0
+        return "{}"
+    
+    pairs := []
+    for key, data in favMap {
+        keyStr := EscapeJSON(key)
+        path := EscapeJSON(data.path)
+        addedAt := EscapeJSON(data.addedAt)
+        
+        pairs.Push('"' keyStr '":{"path":"' path '","addedAt":"' addedAt '"}')
+    }
+    
+    return "{" StrJoin(pairs, ",") "}"
+}
+
+ParseFavoritesJSON(json) {
+    result := Map()
+    
+    if !json || json = "{}"
+        return result
+    
+    try {
+        content := Trim(SubStr(json, 2, StrLen(json) - 2))
+        entries := SplitTopLevel(content)
+        
+        for entry in entries {
+            if !InStr(entry, ":")
+                continue
+            
+            if !RegExMatch(entry, '"([^"]+)":\s*{', &m)
+                continue
+            
+            key := m[1]
+            path := ""
+            addedAt := ""
+            
+            if RegExMatch(entry, '"path"\s*:\s*"([^"]+)"', &m2)
+                path := UnescapeJSON(m2[1])
+            
+            if RegExMatch(entry, '"addedAt"\s*:\s*"([^"]+)"', &m3)
+                addedAt := m3[1]
+            
+            if path != ""
+                result[key] := {
+                    path: path,
+                    addedAt: addedAt
+                }
+        }
+    } catch {
+        return Map()
+    }
+    
+    return result
+}
+
+; ========== CATEGORY VIEW WITH PAGINATION ==========
+
+OpenCategory(category, sortBy := "favorites", page := 1) {
+    global COLORS, BASE_DIR
+    
+    macros := GetMacrosWithInfo(category, sortBy)
+    
+    if (macros.Length = 0) {
+        MsgBox "No macros found in '" category "'", "No Macros", "Iconi"
+        return
+    }
+    
+    win := Gui("-Resize +Border", category " - Macros")
+    win.BackColor := COLORS.bg
+    win.SetFont("s10", "Segoe UI")
+    
+    win.__data := macros
+    win.__cards := []
+    win.__currentPage := page
+    win.__itemsPerPage := 8
+    win.__sortBy := sortBy
+    win.__category := category
+    
+    win.Add("Text", "x0 y0 w750 h90 Background" COLORS.accent)
+    
+    backBtn := win.Add("Button", "x20 y25 w70 h35 Background" COLORS.accentHover, "← Back")
+    backBtn.SetFont("s10")
+    backBtn.OnEvent("Click", (*) => win.Destroy())
+    
+    title := win.Add("Text", "x105 y20 w400 h100 c" COLORS.text " BackgroundTrans", category)
+    title.SetFont("s22 bold")
+    
+    sortLabel := win.Add("Text", "x530 y25 w60 c" COLORS.text " BackgroundTrans", "Sort by:")
+    sortLabel.SetFont("s9")
+    
+    sortDDL := win.Add("DropDownList", "x530 y45 w200 Background" COLORS.card " c" COLORS.text, 
+        ["⭐ Favorites First", "🔤 Name (A-Z)", "🔤 Name (Z-A)", "📊 Most Used", "📊 Least Used", "📅 Recently Added"])
+    sortDDL.SetFont("s9")
+    
+    sortIndexMap := Map(
+        "favorites", 1,
+        "name_asc", 2,
+        "name_desc", 3,
+        "runs_desc", 4,
+        "runs_asc", 5,
+        "recent", 6
+    )
+    sortDDL.Choose(sortIndexMap.Has(sortBy) ? sortIndexMap[sortBy] : 1)
+    sortDDL.OnEvent("Change", (*) => ChangeSortAndRefresh(win, sortDDL.Text, category))
+    
+    win.__scrollY := 110
+    
+    RenderCards(win)
+    win.Show("w750 h640 Center")
+}
+
+ChangeSortAndRefresh(win, sortText, category) {
+    sortMap := Map(
+        "⭐ Favorites First", "favorites",
+        "🔤 Name (A-Z)", "name_asc",
+        "🔤 Name (Z-A)", "name_desc",
+        "📊 Most Used", "runs_desc",
+        "📊 Least Used", "runs_asc",
+        "📅 Recently Added", "recent"
+    )
+    
+    sortBy := sortMap.Has(sortText) ? sortMap[sortText] : "favorites"
+    
+    win.Destroy()
+    Sleep 100
+    OpenCategory(category, sortBy, 1)
+}
+
+ChangePage(win, direction) {
+    category := win.__category
+    sortBy := win.__sortBy
+    newPage := win.__currentPage + direction
+    
+    totalPages := Ceil(win.__data.Length / win.__itemsPerPage)
+    
+    if (newPage < 1)
+        newPage := 1
+    if (newPage > totalPages)
+        newPage := totalPages
+    
+    win.Destroy()
+    Sleep 100
+    OpenCategory(category, sortBy, newPage)
+}
+
+RenderCards(win) {
+    global COLORS
+    
+    if !win.HasProp("__data")
+        return
+    
+    if win.HasProp("__cards") && win.__cards.Length > 0 {
+        for ctrl in win.__cards {
+            try ctrl.Destroy()
+            catch {
+            }
+        }
+    }
+    win.__cards := []
+    
+    macros := win.__data
+    scrollY := win.__scrollY
+    
+    if (macros.Length = 0) {
+        noResult := win.Add("Text", "x25 y" scrollY " w700 h100 c" COLORS.textDim " Center", "No macros found")
+        noResult.SetFont("s10")
+        win.__cards.Push(noResult)
+        return
+    }
+    
+    itemsPerPage := win.__itemsPerPage
+    currentPage := win.__currentPage
+    totalPages := Ceil(macros.Length / itemsPerPage)
+    
+    if (currentPage > totalPages) {
+        currentPage := totalPages
+        win.__currentPage := currentPage
+    }
+    
+    startIdx := ((currentPage - 1) * itemsPerPage) + 1
+    endIdx := Min(currentPage * itemsPerPage, macros.Length)
+    itemsToShow := endIdx - startIdx + 1
+    
+    if (itemsToShow = 1) {
+        item := macros[startIdx]
+        CreateFullWidthCard(win, item, 25, scrollY, 700, 110)
+    } else {
+        cardWidth := 340
+        cardHeight := 110
+        spacing := 10
+        
+        Loop itemsToShow {
+            idx := startIdx + A_Index - 1
+            item := macros[idx]
+            
+            col := Mod(A_Index - 1, 2)
+            row := Floor((A_Index - 1) / 2)
+            
+            xPos := 25 + (col * (cardWidth + spacing))
+            yPos := scrollY + (row * (cardHeight + spacing))
+            
+            CreateGridCard(win, item, xPos, yPos, cardWidth, cardHeight)
+        }
+    }
+    
+    if (macros.Length > itemsPerPage) {
+        paginationY := scrollY + 470
+        
+        pageInfo := win.Add("Text", "x25 y" paginationY " w300 c" COLORS.textDim, 
+            "Page " currentPage " of " totalPages " (" macros.Length " total)")
+        pageInfo.SetFont("s9")
+        win.__cards.Push(pageInfo)
+        
+        if (currentPage > 1) {
+            prevBtn := win.Add("Button", "x335 y" (paginationY - 5) " w90 h35 Background" COLORS.accentHover, "← Previous")
+            prevBtn.SetFont("s9")
+            prevBtn.OnEvent("Click", (*) => ChangePage(win, -1))
+            win.__cards.Push(prevBtn)
+        }
+        
+        if (currentPage < totalPages) {
+            nextBtn := win.Add("Button", "x635 y" (paginationY + 10) " w90 h35 Background" COLORS.accentHover, "Next →")
+            nextBtn.SetFont("s9")
+            nextBtn.OnEvent("Click", (*) => ChangePage(win, 1))
+            win.__cards.Push(nextBtn)
+        }
+    }
+}
+
+; ========== CARD CREATION ==========
+
+CreateFullWidthCard(win, item, x, y, w, h) {
+    global COLORS
+    
+    card := win.Add("Text", "x" x " y" y " w" w " h" h " Background" COLORS.card)
+    win.__cards.Push(card)
+    
+    iconPath := GetMacroIcon(item.path)
+    hasIcon := false
+    
+    if (iconPath && FileExist(iconPath)) {
+        try {
+            pic := win.Add("Picture", "x" (x + 20) " y" (y + 15) " w80 h80 BackgroundTrans", iconPath)
+            win.__cards.Push(pic)
+            hasIcon := true
+        } catch {
+        }
+    }
+    
+    if (!hasIcon) {
+        initial := SubStr(item.info.Title, 1, 1)
+        iconColor := GetCategoryColor(item.info.Title)
+        badge := win.Add("Text", "x" (x + 20) " y" (y + 15) " w80 h80 Background" iconColor " Center", initial)
+        badge.SetFont("s32 bold c" COLORS.text)
+        win.__cards.Push(badge)
+    }
+    
+    titleCtrl := win.Add("Text", "x" (x + 120) " y" (y + 20) " w340 c" COLORS.text " BackgroundTrans", item.info.Title)
+    titleCtrl.SetFont("s13 bold")
+    win.__cards.Push(titleCtrl)
+    
+    creatorCtrl := win.Add("Text", "x" (x + 120) " y" (y + 50) " w340 c" COLORS.textDim " BackgroundTrans", "by " item.info.Creator)
+    creatorCtrl.SetFont("s10")
+    win.__cards.Push(creatorCtrl)
+    
+    versionCtrl := win.Add("Text", "x" (x + 120) " y" (y + 75) " w60 h22 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
+    versionCtrl.SetFont("s9 bold")
+    win.__cards.Push(versionCtrl)
+    
+    runCount := GetRunCount(item.path)
+    if (runCount > 0) {
+        runCountCtrl := win.Add("Text", "x" (x + 190) " y" (y + 75) " w100 h22 c" COLORS.textDim " BackgroundTrans", "Runs: " runCount)
+        runCountCtrl.SetFont("s9")
+        win.__cards.Push(runCountCtrl)
+    }
+    
+    currentPath := item.path
+    isFav := IsFavorite(currentPath)
+    favBtn := win.Add("Button", "x" (x + w - 145) " y" (y + 20) " w35 h35 Center Background" (isFav ? COLORS.favorite : COLORS.cardHover), isFav ? "★" : "✰")
+    favBtn.SetFont("s18", "Segoe UI Symbol")
+    favBtn.OnEvent("Click", (*) => ToggleFavoriteAndRefresh(win, currentPath))
+    win.__cards.Push(favBtn)
+    
+    runBtn := win.Add("Button", "x" (x + w - 100) " y" (y + 20) " w90 h35 Background" COLORS.success, "▶ Run")
+    runBtn.SetFont("s11 bold")
+    runBtn.OnEvent("Click", (*) => RunMacro(currentPath))
+    win.__cards.Push(runBtn)
+    
+    if (Trim(item.info.Links) != "") {
+        currentLinks := item.info.Links
+        linksBtn := win.Add("Button", "x" (x + w - 100) " y" (y + 65) " w90 h30 Background" COLORS.accentAlt, "🔗 Links")
+        linksBtn.SetFont("s10")
+        linksBtn.OnEvent("Click", (*) => OpenLinks(currentLinks))
+        win.__cards.Push(linksBtn)
+    }
+}
+
+CreateGridCard(win, item, x, y, w, h) {
+    global COLORS
+    
+    card := win.Add("Text", "x" x " y" y " w" w " h" h " Background" COLORS.card)
+    win.__cards.Push(card)
+    
+    iconPath := GetMacroIcon(item.path)
+    hasIcon := false
+    
+    if (iconPath && FileExist(iconPath)) {
+        try {
+            pic := win.Add("Picture", "x" (x + 15) " y" (y + 15) " w60 h60 BackgroundTrans", iconPath)
+            win.__cards.Push(pic)
+            hasIcon := true
+        } catch {
+        }
+    }
+    
+    if (!hasIcon) {
+        initial := SubStr(item.info.Title, 1, 1)
+        iconColor := GetCategoryColor(item.info.Title)
+        badge := win.Add("Text", "x" (x + 15) " y" (y + 15) " w60 h60 Background" iconColor " Center", initial)
+        badge.SetFont("s24 bold c" COLORS.text)
+        win.__cards.Push(badge)
+    }
+    
+    titleCtrl := win.Add("Text", "x" (x + 90) " y" (y + 15) " w" (w - 190) " h30 c" COLORS.text " BackgroundTrans", item.info.Title)
+    titleCtrl.SetFont("s11 bold")
+    win.__cards.Push(titleCtrl)
+    
+    creatorCtrl := win.Add("Text", "x" (x + 90) " y" (y + 40) " w" (w - 190) " c" COLORS.textDim " BackgroundTrans", "by " item.info.Creator)
+    creatorCtrl.SetFont("s9")
+    win.__cards.Push(creatorCtrl)
+    
+    versionCtrl := win.Add("Text", "x" (x + 90) " y" (y + 63) " w50 h18 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
+    versionCtrl.SetFont("s8 bold")
+    win.__cards.Push(versionCtrl)
+    
+    runCount := GetRunCount(item.path)
+    if (runCount > 0) {
+        runCountCtrl := win.Add("Text", "x" (x + 150) " y" (y + 63) " w80 h18 c" COLORS.textDim " BackgroundTrans", "Runs: " runCount)
+        runCountCtrl.SetFont("s8")
+        win.__cards.Push(runCountCtrl)
+    }
+    
+    currentPath := item.path
+    isFav := IsFavorite(currentPath)
+    favBtn := win.Add("Button", "x" (x + w - 110) " y" (y + 20) " w20 h20 Center Background" (isFav ? COLORS.favorite : COLORS.cardHover), isFav ? "★" : "✰")
+    favBtn.SetFont("s11", "Segoe UI Symbol")
+    favBtn.OnEvent("Click", (*) => ToggleFavoriteAndRefresh(win, currentPath))
+    win.__cards.Push(favBtn)
+    
+    runBtn := win.Add("Button", "x" (x + w - 90) " y" (y + 15) " w80 h30 Background" COLORS.success, "▶ Run")
+    runBtn.SetFont("s10 bold")
+    runBtn.OnEvent("Click", (*) => RunMacro(currentPath))
+    win.__cards.Push(runBtn)
+    
+    if (Trim(item.info.Links) != "") {
+        currentLinks := item.info.Links
+        linksBtn := win.Add("Button", "x" (x + w - 90) " y" (y + 50) " w80 h22 Background" COLORS.card, "🔗 Links")
+        linksBtn.SetFont("s8")
+        linksBtn.OnEvent("Click", (*) => OpenLinks(currentLinks))
+        win.__cards.Push(linksBtn)
+    }
+}
+
+ToggleFavoriteAndRefresh(win, macroPath) {
+    ToggleFavorite(macroPath)
+    
+    category := win.__category
+    sortBy := win.__sortBy
+    currentPage := win.__currentPage
+    
+    win.Destroy()
+    Sleep 100
+    OpenCategory(category, sortBy, currentPage)
+}
+
+; ========== SORTING FUNCTIONS ==========
+
+SortByFavorites(macros) {
+    favs := []
+    nonFavs := []
+    
+    for item in macros {
+        if IsFavorite(item.path)
+            favs.Push(item)
+        else
+            nonFavs.Push(item)
+    }
+    
+    sorted := []
+    for item in favs
+        sorted.Push(item)
+    for item in nonFavs
+        sorted.Push(item)
+    
+    return sorted
+}
+
+SortByName(macros, ascending := true) {
+    if (macros.Length <= 1)
+        return macros
+    
+    sorted := macros.Clone()
+    
+    Loop sorted.Length - 1 {
+        i := A_Index
+        Loop sorted.Length - i {
+            j := A_Index + i
+            
+            titleI := sorted[i].info.Title
+            titleJ := sorted[j].info.Title
+            
+            comparison := StrCompare(StrLower(titleI), StrLower(titleJ))
+            
+            if ascending {
+                if (comparison > 0) {
+                    temp := sorted[i]
+                    sorted[i] := sorted[j]
+                    sorted[j] := temp
+                }
+            } else {
+                if (comparison < 0) {
+                    temp := sorted[i]
+                    sorted[i] := sorted[j]
+                    sorted[j] := temp
+                }
+            }
+        }
+    }
+    
+    return sorted
+}
+
+SortByRuns(macros, ascending := true) {
+    if (macros.Length <= 1)
+        return macros
+    
+    sorted := macros.Clone()
+    
+    Loop sorted.Length - 1 {
+        i := A_Index
+        Loop sorted.Length - i {
+            j := A_Index + i
+            
+            runI := GetRunCount(sorted[i].path)
+            runJ := GetRunCount(sorted[j].path)
+            
+            if ascending {
+                if (runI > runJ) {
+                    temp := sorted[i]
+                    sorted[i] := sorted[j]
+                    sorted[j] := temp
+                }
+            } else {
+                if (runI < runJ) {
+                    temp := sorted[i]
+                    sorted[i] := sorted[j]
+                    sorted[j] := temp
+                }
+            }
+        }
+    }
+    
+    return sorted
+}
+
+SortByRecent(macros) {
+    global favorites
+    sorted := macros.Clone()
+    
+    Loop sorted.Length - 1 {
+        i := A_Index
+        Loop sorted.Length - i {
+            j := A_Index + i
+            
+            keyI := GetMacroKey(sorted[i].path)
+            keyJ := GetMacroKey(sorted[j].path)
+            
+            timeI := favorites.Has(keyI) ? favorites[keyI].addedAt : "0"
+            timeJ := favorites.Has(keyJ) ? favorites[keyJ].addedAt : "0"
+            
+            if (timeI < timeJ) {
+                temp := sorted[i]
+                sorted[i] := sorted[j]
+                sorted[j] := temp
+            }
+        }
+    }
+    
+    return sorted
+}
+
+; ========== HELPER FUNCTIONS ==========
+
+EscapeJSON(s) {
+    s := StrReplace(s, "\", "\\")
+    s := StrReplace(s, '"', '\"')
+    s := StrReplace(s, "`r", "")
+    s := StrReplace(s, "`n", "\n")
+    s := StrReplace(s, "`t", "\t")
+    return s
+}
+
+UnescapeJSON(str) {
+    str := StrReplace(str, "\\", "\")
+    str := StrReplace(str, '\"', '"')
+    str := StrReplace(str, "\n", "`n")
+    str := StrReplace(str, "\r", "`r")
+    str := StrReplace(str, "\t", "`t")
+    return str
+}
+
+StrJoin(arr, delim) {
+    result := ""
+    for item in arr {
+        if (result != "")
+            result .= delim
+        result .= item
+    }
+    return result
+}
+
+SplitTopLevel(str) {
+    result := []
+    depth := 0
+    current := ""
+    
+    Loop Parse, str {
+        char := A_LoopField
+        
+        if (char = "{")
+            depth++
+        else if (char = "}")
+            depth--
+        
+        if (char = "," && depth = 0) {
+            if (Trim(current) != "")
+                result.Push(Trim(current))
+            current := ""
+        } else {
+            current .= char
+        }
+    }
+    
+    if (Trim(current) != "")
+        result.Push(Trim(current))
+    
+    return result
+}
