@@ -30,5 +30,8 @@
   "changelog": [
     "A NEW MACRO HAS BEEN ADDED!!! PS99 MARKET SNIPE!!!!",
     "FIXED THE WAY CARDS WERE DISPLAYED!"
-  ]
+  ],
+  "panic_mode": true,
+  "panic_reason": "Emergency lockdown activated",
+  "panic_activated_at": "2026-01-26T06:24:29.012Z"
 }
