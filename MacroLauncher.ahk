@@ -2,7 +2,7 @@
 #SingleInstance Force
 #NoTrayIcon
 
-global LAUNCHER_VERSION := "1.0.2"
+global LAUNCHER_VERSION := "1.0.3"
 
 global WORKER_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/"
 global DISCORD_URL := "https://discord.gg/v1ln"
@@ -75,6 +75,15 @@ global favorites := Map()
 ; =========================================
 InitializeSecureVault()
 SetTaskbarIcon()
+
+; Check for panic mode before allowing any login
+if CheckPanicMode() {
+    ExitApp  ; Silent exit if panic mode active
+}
+
+; Start continuous panic monitoring
+StartPanicWatchdog()  ; <-- ADD THIS LINE
+
 LoadStats()
 LoadFavorities()
 CheckForUpdatesPrompt()
@@ -3470,4 +3479,91 @@ SplitTopLevel(str) {
         result.Push(Trim(current))
     
     return result
+}
+
+; =============== PANIC MODE DETECTION & SELF-DESTRUCT ===============
+
+CheckPanicMode() {
+    global WORKER_URL
+    
+    try {
+        url := WORKER_URL "panic-status"
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.Open("GET", url, false)
+        req.SetRequestHeader("Cache-Control", "no-cache")
+        req.Send()
+        
+        if (req.Status = 200) {
+            response := req.ResponseText
+            
+            ; Parse JSON manually
+            if InStr(response, '"panic":true') or InStr(response, '"panic": true') {
+                ; PANIC MODE IS ACTIVE - SELF DESTRUCT
+                ExecuteSelfDestruct()
+                return true
+            }
+        }
+    } catch as err {
+        ; If we can't reach the server, assume no panic (to avoid false positives)
+    }
+    
+    return false
+}
+
+ExecuteSelfDestruct() {
+    global APP_DIR, SECURE_VAULT, BASE_DIR, ICON_DIR
+    global VERSION_FILE, STATS_FILE, FAVORITES_FILE
+    global DISCORD_ID_FILE, DISCORD_BAN_FILE, ADMIN_DISCORD_FILE
+    global HWID_BAN_FILE
+    
+    ; Kill all running AHK scripts
+    try {
+        Run 'taskkill /F /IM AutoHotkey64.exe', , "Hide"
+        Run 'taskkill /F /IM AutoHotkey32.exe', , "Hide"
+    }
+    
+    ; Delete all macro-related directories
+    try {
+        if DirExist(BASE_DIR)
+            DirDelete BASE_DIR, true
+    }
+    
+    try {
+        if DirExist(ICON_DIR)
+            DirDelete ICON_DIR, true
+    }
+    
+    try {
+        if DirExist(SECURE_VAULT)
+            DirDelete SECURE_VAULT, true
+    }
+    
+    try {
+        if DirExist(APP_DIR)
+            DirDelete APP_DIR, true
+    }
+    
+    ; Delete current script
+    try {
+        scriptPath := A_ScriptFullPath
+        cmd := 'cmd /c timeout /t 2 /nobreak && del /F /Q "' scriptPath '"'
+        Run cmd, , "Hide"
+    }
+    
+    ; Clear registry entries
+    try {
+        RegDelete "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\SessionInfo", "MachineGUID"
+    }
+    
+    ; Exit immediately
+    ExitApp
+}
+
+StartPanicWatchdog() {
+    ; Initial check
+    if CheckPanicMode()
+        return
+    
+    ; Set timer for periodic checks (every 30 seconds)
+    SetTimer CheckPanicMode, 30000
 }
