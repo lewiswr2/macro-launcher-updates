@@ -1,6 +1,15 @@
 {
   "logs": [
     {
+      "t": "2026-01-28 20:24:12",
+      "pc": "DESKTOP-49JS29M",
+      "user": "luca",
+      "discordId": "953380948601339985",
+      "hwid": "1427585753",
+      "role": "user",
+      "loginUser": "V1LNClan@discord"
+    },
+    {
       "t": "2026-01-28 20:17:06",
       "pc": "GLITCHFROMTDS",
       "user": "lucaq",
