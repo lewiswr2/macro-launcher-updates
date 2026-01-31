@@ -3,8 +3,6 @@
 #NoTrayIcon  ; <-- disable during debugging
 Msgbox "hello"
 
-
-
 global LAUNCHER_VERSION := "1.0.2"
 
 ; ================= AUTHENTICATION GLOBALS =================
@@ -14,6 +12,7 @@ global DISCORD_URL := "https://discord.gg/V1ln"
 ; Credential & Session Files
 global CRED_FILE := ""
 global SESSION_FILE := ""
+global SESSION_TOKEN_FILE := ""  ; Added for ban checking compatibility
 global DISCORD_ID_FILE := ""
 global DISCORD_BAN_FILE := ""
 global ADMIN_DISCORD_FILE := ""
@@ -22,6 +21,7 @@ global MACHINE_BAN_FILE := ""
 global HWID_BINDING_FILE := ""
 global LAST_CRED_HASH_FILE := ""
 global HWID_BAN_FILE := ""
+global FIRST_LOGIN_TRACKER_FILE := ""  ; NEW: Track first-time logins
 
 ; Master Credentials
 global MASTER_KEY := ""
@@ -53,7 +53,7 @@ global COLORS := {
     bgLight: "0x13171d",
     card: "0x161b22",
     cardHover: "0x1c2128",
-    accent: "0xd29922",
+    accent: "0x0044ff",
     accentHover: "0x2ea043",
     accentAlt: "0x1f6feb",
     text: "0xe6edf3",
@@ -61,7 +61,8 @@ global COLORS := {
     border: "0x21262d",
     success: "0x238636",
     warning: "0xd29922",
-    danger: "0xda3633"
+    danger: "0xda3633",
+    favorite: "0xfbbf24"
 }
 
 ; =========================================
@@ -109,11 +110,11 @@ return
 
 InitializeSecureVault() {
     global APP_DIR, SECURE_VAULT, BASE_DIR, ICON_DIR, VERSION_FILE, MACHINE_KEY
-    global CRED_FILE, SESSION_FILE, DISCORD_ID_FILE, DISCORD_BAN_FILE
+    global CRED_FILE, SESSION_FILE, SESSION_TOKEN_FILE, DISCORD_ID_FILE, DISCORD_BAN_FILE
     global ADMIN_DISCORD_FILE, SESSION_LOG_FILE, MACHINE_BAN_FILE
     global HWID_BINDING_FILE, LAST_CRED_HASH_FILE, SECURE_CONFIG_FILE
     global ENCRYPTED_KEY_FILE, MASTER_KEY_ROTATION_FILE, HWID_BAN_FILE
-    global MANIFEST_URL, MACRO_LAUNCHER_PATH
+    global MANIFEST_URL, MACRO_LAUNCHER_PATH, FIRST_LOGIN_TRACKER_FILE
     
     MACHINE_KEY := GetOrCreatePersistentKey()
     
@@ -130,6 +131,7 @@ InitializeSecureVault() {
     
     CRED_FILE := SECURE_VAULT "\.sysauth"
     SESSION_FILE := SECURE_VAULT "\.session"
+    SESSION_TOKEN_FILE := SECURE_VAULT "\.session_token"  ; Added
     DISCORD_ID_FILE := SECURE_VAULT "\discord_id.txt"
     DISCORD_BAN_FILE := SECURE_VAULT "\banned_discord_ids.txt"
     ADMIN_DISCORD_FILE := SECURE_VAULT "\admin_discord_ids.txt"
@@ -141,6 +143,7 @@ InitializeSecureVault() {
     ENCRYPTED_KEY_FILE := SECURE_VAULT "\.enckey"
     MASTER_KEY_ROTATION_FILE := SECURE_VAULT "\.key_rotation"
     HWID_BAN_FILE := SECURE_VAULT "\banned_hwids.txt"
+    FIRST_LOGIN_TRACKER_FILE := SECURE_VAULT "\.first_login_tracker"  ; NEW: Track users who have logged in before
     
     try {
         DirCreate APP_DIR
@@ -376,101 +379,55 @@ HashString(str) {
     return Format("{:08X}", hash)
 }
 
-XOREncrypt(data, key) {
-    if (!data || !key)
-        return ""
+LoadSecureConfig() {
+    global SECURE_CONFIG_FILE, MASTER_KEY, DISCORD_WEBHOOK, ADMIN_PASS
     
-    result := ""
-    keyLen := StrLen(key)
-    dataLen := StrLen(data)
-    
-    loop dataLen {
-        dataChar := Ord(SubStr(data, A_Index, 1))
-        keyChar := Ord(SubStr(key, Mod(A_Index - 1, keyLen) + 1, 1))
-        result .= Chr(dataChar ^ keyChar)
-    }
-    
-    return result
-}
-
-SecureFileWrite(path, content) {
-    global MACHINE_KEY
+    if !FileExist(SECURE_CONFIG_FILE)
+        return
     
     try {
-        if FileExist(path) {
-            RunWait 'attrib -h -s -r "' path '"', , "Hide"
-            FileDelete path
+        config := FileRead(SECURE_CONFIG_FILE, "UTF-8")
+        lines := StrSplit(config, "`n")
+        
+        for line in lines {
+            line := Trim(line)
+            if !line
+                continue
+            
+            parts := StrSplit(line, "=", , 2)
+            if (parts.Length < 2)
+                continue
+            
+            key := Trim(parts[1])
+            value := Trim(parts[2])
+            
+            decrypted := DPAPIDecrypt(value)
+            
+            if (key = "MASTER_KEY")
+                MASTER_KEY := decrypted
+            else if (key = "DISCORD_WEBHOOK")
+                DISCORD_WEBHOOK := decrypted
+            else if (key = "ADMIN_PASS")
+                ADMIN_PASS := decrypted
         }
-        
-        obfuscated := XOREncrypt(content, MACHINE_KEY)
-        encrypted := DPAPIEncrypt(obfuscated)
-        
-        if !encrypted
-            throw Error("Encryption failed")
-        
-        padding := ""
-        loop Random(50, 200)
-            padding .= Chr(Random(0, 255))
-        
-        finalData := padding . "|SECURE|" . encrypted . "|END|" . padding
-        
-        FileAppend finalData, path
-        RunWait 'attrib +h +s +r "' path '"', , "Hide"
-    } catch as err {
-        throw Error("Secure write failed: " err.Message)
+    } catch {
     }
 }
 
-TryDecryptWithKey(encrypted, key) {
-    try {
-        obfuscated := DPAPIDecrypt(encrypted)
-        if !obfuscated
-            return ""
-        
-        decrypted := XOREncrypt(obfuscated, key)
-        
-        if (decrypted && StrLen(decrypted) > 0)
-            return decrypted
-        
-        return ""
-    } catch {
-        return ""
-    }
-}
-
-SecureFileRead(path) {
-    global MACHINE_KEY, KEY_HISTORY
-    
-    if !FileExist(path)
-        return ""
+SaveSecureConfig() {
+    global SECURE_CONFIG_FILE, MASTER_KEY, DISCORD_WEBHOOK, ADMIN_PASS
     
     try {
-        rawData := FileRead(path)
+        config := ""
+        config .= "MASTER_KEY=" DPAPIEncrypt(MASTER_KEY) "`n"
+        config .= "DISCORD_WEBHOOK=" DPAPIEncrypt(DISCORD_WEBHOOK) "`n"
+        config .= "ADMIN_PASS=" DPAPIEncrypt(ADMIN_PASS) "`n"
         
-        if !InStr(rawData, "|SECURE|") || !InStr(rawData, "|END|")
-            return ""
+        if FileExist(SECURE_CONFIG_FILE)
+            FileDelete SECURE_CONFIG_FILE
         
-        RegExMatch(rawData, "\|SECURE\|(.*?)\|END\|", &match)
-        if !match
-            return ""
-        
-        encrypted := match[1]
-        
-        decrypted := TryDecryptWithKey(encrypted, MACHINE_KEY)
-        if (decrypted)
-            return decrypted
-        
-        if (KEY_HISTORY.Length > 0) {
-            for oldKey in KEY_HISTORY {
-                decrypted := TryDecryptWithKey(encrypted, oldKey)
-                if (decrypted)
-                    return decrypted
-            }
-        }
-        
-        return ""
+        FileAppend config, SECURE_CONFIG_FILE
     } catch {
-        return ""
     }
 }
 
@@ -490,173 +447,34 @@ DecryptManifestUrl() {
     return url
 }
 
-
 SetTaskbarIcon() {
-    global ICON_DIR
-    iconPath := ICON_DIR "\Launcher.png"
-    
     try {
+        iconData := [
+            0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x10, 0x10,
+            0x00, 0x00, 0x01, 0x00, 0x20, 0x00, 0x68, 0x04,
+            0x00, 0x00, 0x16, 0x00, 0x00, 0x00, 0x28, 0x00
+        ]
+        
+        iconPath := A_Temp "\v1ln_icon.ico"
+        
         if FileExist(iconPath)
-            TraySetIcon(iconPath)
-        else
-            TraySetIcon("shell32.dll", 3)
-    } catch {
-    }
-}
-
-; ================= CONFIG MANAGEMENT =================
-
-LoadSecureConfig() {
-    global SECURE_CONFIG_FILE, MASTER_KEY, DISCORD_WEBHOOK, ADMIN_PASS
-    
-    FetchMasterKeyFromManifest()
-    
-    if !FileExist(SECURE_CONFIG_FILE) {
-        InitializeAuthConfig()
-        return
-    }
-    
-    try {
-        encrypted := FileRead(SECURE_CONFIG_FILE, "UTF-8")
-        decrypted := DecryptConfig(encrypted)
+            FileDelete iconPath
         
-        if RegExMatch(decrypted, '"webhook"\s*:\s*"([^"]+)"', &m2)
-            DISCORD_WEBHOOK := m2[1]
-        if RegExMatch(decrypted, '"admin_pass"\s*:\s*"([^"]+)"', &m3)
-            ADMIN_PASS := m3[1]
+        file := FileOpen(iconPath, "w")
+        for byte in iconData
+            file.WriteUChar(byte)
+        file.Close()
         
-        if (DISCORD_WEBHOOK = "") {
-            try {
-                DISCORD_WEBHOOK := GetWebhookFromManifest()
-                if (DISCORD_WEBHOOK != "")
-                    SaveAuthConfig()
-            } catch {
-            }
-        }
-        
-        if (MASTER_KEY = "" || DISCORD_WEBHOOK = "" || ADMIN_PASS = "")
-            InitializeAuthConfig()
-    } catch {
-        InitializeAuthConfig()
-    }
-}
-
-FetchMasterKeyFromManifest() {
-    global MASTER_KEY, MANIFEST_URL
-    
-    try {
-        tmp := A_Temp "\manifest_config.json"
-        if SafeDownload(MANIFEST_URL, tmp, 20000) {
-            json := FileRead(tmp, "UTF-8")
-            if RegExMatch(json, '"master_key"\s*:\s*"([^"]+)"', &m) {
-                MASTER_KEY := m[1]
-                return true
-            }
+        if FileExist(iconPath) {
+            try TraySetIcon(iconPath)
         }
     } catch {
     }
-    
-    if (MASTER_KEY = "") {
-        MASTER_KEY := GenerateRandomKey(32)
-        return false
-    }
-    
-    return false
 }
 
-InitializeAuthConfig() {
-    global MASTER_KEY, DISCORD_WEBHOOK, ADMIN_PASS, SECURE_CONFIG_FILE
-    
-    if (MASTER_KEY = "")
-        FetchMasterKeyFromManifest()
-    
-    ADMIN_PASS := GenerateRandomKey(16)
-    
-    if (DISCORD_WEBHOOK = "") {
-        try {
-            DISCORD_WEBHOOK := GetWebhookFromManifest()
-        } catch {
-            DISCORD_WEBHOOK := ""
-        }
-    }
-    
-    SaveAuthConfig()
-    NotifyInitialSetup()
-}
-
-SaveAuthConfig() {
-    global SECURE_CONFIG_FILE, MASTER_KEY, DISCORD_WEBHOOK, ADMIN_PASS
-    
-    try {
-        json := '{"webhook":"' JsonEscape(DISCORD_WEBHOOK) '",'
-             . '"admin_pass":"' JsonEscape(ADMIN_PASS) '"}'
-        
-        encrypted := EncryptConfig(json)
-        
-        if FileExist(SECURE_CONFIG_FILE)
-            FileDelete SECURE_CONFIG_FILE
-        
-        FileAppend encrypted, SECURE_CONFIG_FILE
-        Run 'attrib +h +s "' SECURE_CONFIG_FILE '"', , "Hide"
-        
-        return true
-    } catch {
-        return false
-    }
-}
-
-EncryptConfig(plainText) {
-    salt := GetHardwareId() . A_ComputerName . A_UserName . "CONFIG_SALT_2026"
-    encrypted := ""
-    
-    loop parse plainText {
-        charCode := Ord(A_LoopField)
-        saltIdx := Mod(A_Index - 1, StrLen(salt)) + 1
-        saltChar := Ord(SubStr(salt, saltIdx, 1))
-        encrypted .= Chr(charCode ^ saltChar ^ 0xCC)
-    }
-    
-    encoded := ""
-    loop parse encrypted {
-        encoded .= Format("{:02X}", Ord(A_LoopField))
-    }
-    
-    return encoded
-}
-
-DecryptConfig(encrypted) {
-    salt := GetHardwareId() . A_ComputerName . A_UserName . "CONFIG_SALT_2026"
-    
-    decoded := ""
-    pos := 1
-    while (pos <= StrLen(encrypted)) {
-        hex := SubStr(encrypted, pos, 2)
-        decoded .= Chr("0x" hex)
-        pos += 2
-    }
-    
-    plainText := ""
-    loop parse decoded {
-        charCode := Ord(A_LoopField)
-        saltIdx := Mod(A_Index - 1, StrLen(salt)) + 1
-        saltChar := Ord(SubStr(salt, saltIdx, 1))
-        plainText .= Chr(charCode ^ saltChar ^ 0xCC)
-    }
-    
-    return plainText
-}
-
-GenerateRandomKey(length := 32) {
-    chars := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*"
-    key := ""
-    
-    loop length {
-        idx := Random(1, StrLen(chars))
-        key .= SubStr(chars, idx, 1)
-    }
-    
-    return key
-}
+; ===============================================================
+; ENHANCED BAN CHECKING FUNCTIONS FROM BAN_CHECKING_FUNCTIONS.ahk
+; ===============================================================
 
 GetHardwareId() {
     hwid := ""
@@ -707,171 +525,65 @@ GetHardwareId() {
     return hash
 }
 
-NotifyStartupCredentials() {
-    global DISCORD_WEBHOOK, MASTER_KEY, ADMIN_PASS
+ReadDiscordId() {
+    global DISCORD_ID_FILE, SESSION_TOKEN_FILE, WORKER_URL
     
-    if (DISCORD_WEBHOOK = "")
-        return
-    
-    if IsAdminDiscordId() {
-        ts := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
-        hwid := GetHardwareId()
-        did := ReadDiscordId()
-        
-        msg := "📋 V1LN clan - CURRENT CREDENTIALS (Admin Login)"
-            . "`n`n**Master Key:** ||" MASTER_KEY "||"
-            . "`n**Admin Password:** ||" ADMIN_PASS "||"
-            . "`n**Time:** " ts
-            . "`n**PC:** " A_ComputerName
-            . "`n**User:** " A_UserName
-            . "`n**Discord ID:** " did
-            . "`n**HWID:** " hwid
-        
-        DiscordWebhookPost(DISCORD_WEBHOOK, msg)
-    } else {
-        NotifyNonAdminStartup()
-    }
-}
-
-NotifyInitialSetup() {
-    global DISCORD_WEBHOOK, MASTER_KEY, ADMIN_PASS
-    
-    if (DISCORD_WEBHOOK = "")
-        return
-    
-    if !IsAdminDiscordId()
-        return
-    
-    ts := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
-    hwid := GetHardwareId()
-    did := ReadDiscordId()
-    
-    msg := "🎉 V1LN clan - INITIAL SETUP (Admin)"
-        . "`n`n**Master Key:** ||" MASTER_KEY "||"
-        . "`n**Admin Password:** ||" ADMIN_PASS "||"
-        . "`n**Time:** " ts
-        . "`n**PC:** " A_ComputerName
-        . "`n**User:** " A_UserName
-        . "`n**Discord ID:** " did
-        . "`n**HWID:** " hwid
-        . "`n`n⚠️ **Save these credentials securely!**"
-    
-    DiscordWebhookPost(DISCORD_WEBHOOK, msg)
-}
-
-NotifyNonAdminStartup() {
-    global DISCORD_WEBHOOK
-    
-    if (DISCORD_WEBHOOK = "")
-        return
-    
-    ts := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
-    hwid := GetHardwareId()
-    did := ReadDiscordId()
-    
-    msg := "👤 V1LN clan - User Startup (Non-Admin)"
-        . "`n`n**Time:** " ts
-        . "`n**PC:** " A_ComputerName
-        . "`n**User:** " A_UserName
-        . "`n**Discord ID:** " did
-        . "`n**HWID:** " hwid
-    
-    DiscordWebhookPost(DISCORD_WEBHOOK, msg)
-}
-
-DiscordWebhookPost(webhookUrl, content) {
+    ; Try reading from local file first
     try {
-        json := '{"content":"' JsonEscape(content) '"}'
-        req := ComObject("WinHttp.WinHttpRequest.5.1")
-        req.Option[6] := 1
-        req.SetTimeouts(15000, 15000, 15000, 15000)
-        req.Open("POST", webhookUrl, false)
-        req.SetRequestHeader("Content-Type", "application/json")
-        req.SetRequestHeader("User-Agent", "v1ln-clan")
-        req.Send(json)
-    } catch {
-    }
-}
-
-JsonEscape(s) {
-    s := StrReplace(s, "\", "\\")
-    s := StrReplace(s, '"', '\"')
-    s := StrReplace(s, "`r", "")
-    s := StrReplace(s, "`n", "\n")
-    s := StrReplace(s, "`t", "\t")
-    return s
-}
-
-GetWebhookFromManifest() {
-    global MANIFEST_URL
-    
-    tmp := A_Temp "\manifest_webhook.json"
-    if !SafeDownload(MANIFEST_URL, tmp, 20000)
-        return ""
-    
-    try {
-        json := FileRead(tmp, "UTF-8")
-        if RegExMatch(json, '"webhook"\s*:\s*"([^"]+)"', &m)
-            return m[1]
+        if FileExist(DISCORD_ID_FILE) {
+            discordId := Trim(FileRead(DISCORD_ID_FILE, "UTF-8"))
+            if (discordId != "" && RegExMatch(discordId, "^\d{6,30}$")) {
+                return discordId
+            }
+        }
     } catch {
     }
     
+    ; ✅ FALLBACK: Try getting from session token
+    try {
+        if FileExist(SESSION_TOKEN_FILE) {
+            sessionToken := Trim(FileRead(SESSION_TOKEN_FILE, "UTF-8"))
+            
+            if (sessionToken != "") {
+                body := '{"session_token":"' JsonEscape(sessionToken) '"}'
+                
+                req := ComObject("WinHttp.WinHttpRequest.5.1")
+                req.SetTimeouts(10000, 10000, 10000, 10000)
+                req.Open("POST", WORKER_URL "/auth/get-discord-id", false)
+                req.SetRequestHeader("Content-Type", "application/json")
+                req.Send(body)
+                
+                if (req.Status = 200) {
+                    resp := req.ResponseText
+                    if RegExMatch(resp, '"discord_id"\s*:\s*"([^"]+)"', &m) {
+                        discordId := m[1]
+                        
+                        ; ✅ Save it locally for next time
+                        try {
+                            SaveDiscordId(discordId)
+                        } catch {
+                        }
+                        
+                        return discordId
+                    }
+                }
+            }
+        }
+    } catch {
+    }
+    
+    ; If all else fails, return empty
     return ""
 }
 
-; ================= BAN & SESSION MANAGEMENT =================
-
-CheckLockout() {
-    global LOCKOUT_FILE, MASTER_KEY, COLORS
-    if !FileExist(LOCKOUT_FILE)
-        return
+SaveDiscordId(discordId) {
+    global DISCORD_ID_FILE
     
     try {
-        lockTime := Trim(FileRead(LOCKOUT_FILE))
-        diff := DateDiff(A_Now, lockTime, "Minutes")
-        if (diff >= 30) {
-            try FileDelete LOCKOUT_FILE
-            return
-        }
-        
-        remaining := 30 - diff
-        
-        lockGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "V1LN clan - Account Locked")
-        lockGui.BackColor := COLORS.bg
-        lockGui.SetFont("s10 c" COLORS.text, "Segoe UI")
-        
-        lockGui.Add("Text", "x0 y0 w450 h80 Background" COLORS.danger)
-        lockGui.Add("Text", "x0 y15 w450 h50 Center c" COLORS.text " BackgroundTrans", "🔒 ACCOUNT LOCKED").SetFont("s18 bold")
-        
-        lockGui.Add("Text", "x25 y100 w400 h120 Background" COLORS.card)
-        lockGui.Add("Text", "x45 y120 w360 c" COLORS.text " BackgroundTrans", 
-            "Too many failed login attempts.`n`n"
-            . "Time remaining: " remaining " minutes`n`n"
-            . "Use Master Key to unlock immediately.")
-        
-        unlockBtn := lockGui.Add("Button", "x75 y240 w150 h40 Background" COLORS.success, "Unlock with Master Key")
-        unlockBtn.SetFont("s10 bold")
-        exitBtn := lockGui.Add("Button", "x235 y240 w150 h40 Background" COLORS.danger, "Exit")
-        exitBtn.SetFont("s10 bold")
-        
-        unlockBtn.OnEvent("Click", (*) => (
-            ib := InputBox("Enter MASTER KEY:", "V1LN clan - Unlock", "Password w400 h150"),
-            (ib.Result = "OK" && Trim(ib.Value) = MASTER_KEY
-                ? (FileDelete(LOCKOUT_FILE), lockGui.Destroy(), MsgBox("✅ Lockout removed.", "V1LN clan", "Iconi"))
-                : MsgBox("❌ Invalid master key.", "V1LN clan", "Icon! 0x10"))
-        ))
-        
-        exitBtn.OnEvent("Click", (*) => ExitApp())
-        lockGui.OnEvent("Close", (*) => ExitApp())
-        
-        lockGui.Show("w450 h310 Center")
-        WinWaitClose(lockGui.Hwnd)
-        
-        if FileExist(LOCKOUT_FILE)
-            ExitApp
-            
+        if FileExist(DISCORD_ID_FILE)
+            FileDelete DISCORD_ID_FILE
+        FileAppend discordId, DISCORD_ID_FILE
     } catch {
-        try FileDelete LOCKOUT_FILE
     }
 }
 
@@ -888,7 +600,7 @@ EnsureDiscordId() {
     
     id := PromptDiscordIdGui()
     if (id = "") {
-        MsgBox "Discord ID is required.", "V1LN clan - Required", "Icon! 0x10"
+        MsgBox "Discord ID is required.", "V1LN Clan - Required", "Icon! 0x10"
         ExitApp
     }
 }
@@ -896,7 +608,7 @@ EnsureDiscordId() {
 PromptDiscordIdGui() {
     global DISCORD_ID_FILE, COLORS
     
-    didGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "V1LN clan - Discord ID Required")
+    didGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "V1LN Clan - Discord ID Required")
     didGui.BackColor := COLORS.bg
     didGui.SetFont("s10 c" COLORS.text, "Segoe UI")
     
@@ -951,24 +663,122 @@ PromptDiscordIdGui() {
     return resultId
 }
 
-ReadDiscordId() {
-    global DISCORD_ID_FILE
-    try if FileExist(DISCORD_ID_FILE)
-        return Trim(FileRead(DISCORD_ID_FILE, "UTF-8"))
-    return ""
-}
+; ===============================================================
+; BAN VALIDATION FUNCTIONS
+; ===============================================================
 
 ValidateNotBanned() {
-    if !CheckServerBanStatus()
-        return false
+    global WORKER_URL
+    
+    hwid := GetHardwareId()
+    discordId := ReadDiscordId()
+    
+    ; If Discord ID is missing, this is a new user - allow
+    if (discordId = "" || discordId = "Unknown") {
+        return true
+    }
+    
+    body := '{"hwid":"' hwid '","discord_id":"' discordId '"}'
+    
+    try {
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(10000, 10000, 10000, 10000)
+        req.Open("POST", WORKER_URL "/check-ban", false)
+        req.SetRequestHeader("Content-Type", "application/json")
+        req.Send(body)
+        
+        if (req.Status != 200) {
+            ; On server error, fail-open (allow access)
+            return true
+        }
+        
+        resp := req.ResponseText
+        
+        ; If admin, always allow
+        if RegExMatch(resp, '"is_admin"\s*:\s*true')
+            return true
 
-    if IsDiscordBanned()
-        return false
+        ; Check if explicitly banned
+        if RegExMatch(resp, '"banned"\s*:\s*true') {
+            ; Double-check it's actually in the response
+            if RegExMatch(resp, '"reason"\s*:\s*"(discord_id|hwid)"')
+                return false
+        }
+        
+        ; Default: allow access
+        return true
+        
+    } catch as err {
+        ; If server check fails, allow login (fail-open)
+        return true
+    }
+}
 
-    if IsHwidBanned()
+IsDiscordBanned() {
+    global DISCORD_BAN_FILE
+    
+    if !FileExist(DISCORD_BAN_FILE)
         return false
+    
+    try {
+        data := Trim(FileRead(DISCORD_BAN_FILE, "UTF-8"))
+        if (data = "")
+            return false
+        
+        currentDiscordId := ReadDiscordId()
+        if (currentDiscordId = "")
+            return false
+        
+        ; Check if current Discord ID is in the ban file
+        bannedIds := StrSplit(data, "`n")
+        for bannedId in bannedIds {
+            bannedId := Trim(bannedId)
+            if (bannedId = currentDiscordId)
+                return true
+        }
+    } catch {
+    }
+    
+    return false
+}
 
-    return true
+IsMachineBanned() {
+    global MACHINE_BAN_FILE
+    
+    if !FileExist(MACHINE_BAN_FILE)
+        return false
+    
+    try {
+        data := Trim(FileRead(MACHINE_BAN_FILE, "UTF-8"))
+        return (data = "1" || data = "true")
+    } catch {
+        return false
+    }
+}
+
+IsHwidBanned() {
+    global HWID_BAN_FILE
+    
+    if !FileExist(HWID_BAN_FILE)
+        return false
+    
+    try {
+        data := Trim(FileRead(HWID_BAN_FILE, "UTF-8"))
+        if (data = "")
+            return false
+        
+        currentHwid := String(GetHardwareId())
+        
+        bannedHwids := StrSplit(data, "`n")
+        for bannedHwid in bannedHwids {
+            bannedHwid := Trim(bannedHwid)
+            if (bannedHwid = currentHwid)
+                return true
+        }
+    } catch {
+    }
+    
+    return false
 }
 
 CheckServerBanStatus() {
@@ -977,70 +787,127 @@ CheckServerBanStatus() {
     hwid := GetHardwareId()
     discordId := ReadDiscordId()
     
-    if (discordId = "")
-        return false
-    
     body := '{"hwid":"' hwid '","discord_id":"' discordId '"}'
     
     try {
-        resp := WorkerPost("/check-ban", body)
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(10000, 10000, 10000, 10000)
+        req.Open("POST", WORKER_URL "/check-ban", false)
+        req.SetRequestHeader("Content-Type", "application/json")
+        req.Send(body)
         
-        if RegExMatch(resp, '"banned"\s*:\s*true')
-            return false
-        
-        if !ValidateHwidBinding(hwid, discordId)
-            return false
-        
-        return true
+        if (req.Status = 200) {
+            resp := req.ResponseText
+            
+            if RegExMatch(resp, '"banned"\s*:\s*true')
+                return true
+        }
     } catch {
-        return !IsDiscordBanned() && !IsMachineBanned()
     }
+    
+    return false
 }
 
 ValidateHwidBinding(hwid, discordId) {
-    global WORKER_URL, HWID_BINDING_FILE
+    global HWID_BINDING_FILE
     
-    body := '{"hwid":"' hwid '","discord_id":"' discordId '"}'
-    
-    try {
-        resp := WorkerPost("/validate-binding", body)
-        
-        if RegExMatch(resp, '"valid"\s*:\s*false') {
-            SaveMachineBan(discordId, "hwid_mismatch")
-            return false
-        }
-        
+    if !FileExist(HWID_BINDING_FILE) {
         try {
-            if FileExist(HWID_BINDING_FILE)
-                FileDelete HWID_BINDING_FILE
-            FileAppend hwid "|" discordId "|" A_Now, HWID_BINDING_FILE
-            Run 'attrib +h +s "' HWID_BINDING_FILE '"', , "Hide"
+            FileAppend hwid "|" discordId, HWID_BINDING_FILE
+        } catch {
         }
-        
-        return true
-    } catch {
-        try {
-            if FileExist(HWID_BINDING_FILE) {
-                data := FileRead(HWID_BINDING_FILE, "UTF-8")
-                parts := StrSplit(data, "|")
-                if (parts.Length >= 2) {
-                    cachedHwid := Trim(parts[1])
-                    cachedDiscordId := Trim(parts[2])
-                    
-                    if (cachedHwid = hwid && cachedDiscordId = discordId)
-                        return true
-                }
-            }
-        }
-        
         return true
     }
+    
+    try {
+        data := Trim(FileRead(HWID_BINDING_FILE, "UTF-8"))
+        if (data = "")
+            return true
+        
+        parts := StrSplit(data, "|")
+        if (parts.Length < 2)
+            return true
+        
+        boundHwid := parts[1]
+        boundDiscordId := parts[2]
+        
+        if (boundHwid != hwid || boundDiscordId != discordId)
+            return false
+    } catch {
+        return true
+    }
+    
+    return true
 }
+
+StartSessionWatchdog() {
+    SetTimer CheckSessionValidity, 300000  ; Check every 5 minutes
+}
+
+CheckSessionValidity() {
+    if !ValidateNotBanned() {
+        ShowBanMessage()
+        ExitApp
+    }
+}
+
+; ===============================================================
+; LOCKOUT CHECKING
+; ===============================================================
+
+CheckLockout() {
+    global LOCKOUT_FILE, COLORS
+    if !FileExist(LOCKOUT_FILE)
+        return
+    
+    try {
+        lockTime := Trim(FileRead(LOCKOUT_FILE))
+        diff := DateDiff(A_Now, lockTime, "Minutes")
+        if (diff >= 30) {
+            try FileDelete LOCKOUT_FILE
+            return
+        }
+        
+        remaining := 30 - diff
+        
+        lockGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "V1LN Clan - Account Locked")
+        lockGui.BackColor := COLORS.bg
+        lockGui.SetFont("s10 c" COLORS.text, "Segoe UI")
+        
+        lockGui.Add("Text", "x0 y0 w450 h80 Background" COLORS.danger)
+        lockGui.Add("Text", "x0 y15 w450 h50 Center c" COLORS.text " BackgroundTrans", "🔒 ACCOUNT LOCKED").SetFont("s18 bold")
+        
+        lockGui.Add("Text", "x25 y100 w400 h120 Background" COLORS.card)
+        lockGui.Add("Text", "x45 y120 w360 c" COLORS.text " BackgroundTrans", 
+            "Too many failed login attempts.`n`n"
+            . "Time remaining: " remaining " minutes`n`n"
+            . "Contact support if this is a mistake.")
+        
+        exitBtn := lockGui.Add("Button", "x155 y240 w150 h40 Background" COLORS.danger, "Exit")
+        exitBtn.SetFont("s10 bold")
+        
+        exitBtn.OnEvent("Click", (*) => ExitApp())
+        lockGui.OnEvent("Close", (*) => ExitApp())
+        
+        lockGui.Show("w450 h310 Center")
+        WinWaitClose(lockGui.Hwnd)
+        
+        if FileExist(LOCKOUT_FILE)
+            ExitApp
+            
+    } catch {
+        try FileDelete LOCKOUT_FILE
+    }
+}
+
+; ===============================================================
+; BAN MESSAGE GUI
+; ===============================================================
 
 ShowBanMessage() {
     global COLORS, DISCORD_URL
     
-    banGui := Gui("-MinimizeBox -MaximizeBox +AlwaysOnTop", "V1LN clan - Account Banned")
+    banGui := Gui("-MinimizeBox -MaximizeBox +AlwaysOnTop", "V1LN Clan - Account Banned")
     banGui.BackColor := COLORS.bg
     banGui.SetFont("s10 c" COLORS.text, "Segoe UI")
     
@@ -1050,7 +917,7 @@ ShowBanMessage() {
     banGui.Add("Text", "x25 y100 w450 h250 Background" COLORS.card)
     
     msgText := banGui.Add("Text", "x45 y120 w410 c" COLORS.text " BackgroundTrans", 
-        "You've been banned from using V1LN clan.`n`n"
+        "You've been banned from using V1LN Clan.`n`n"
         . "Discord ID: " ReadDiscordId() "`n"
         . "HWID: " GetHardwareId() "`n`n"
         . "If you think this was a mistake, please join our`n"
@@ -1071,441 +938,359 @@ ShowBanMessage() {
     WinWaitClose(banGui.Hwnd)
 }
 
-IsMachineBanned() {
-    global MACHINE_BAN_FILE
-    
-    if !FileExist(MACHINE_BAN_FILE)
-        return false
-    
-    try {
-        data := Trim(FileRead(MACHINE_BAN_FILE, "UTF-8"))
-        if (data = "")
-            return false
-        
-        parts := StrSplit(data, "|")
-        bannedHwid := (parts.Length >= 2) ? Trim(parts[2]) : ""
-        currentHwid := GetHardwareId()
-        
-        return (bannedHwid != "" && bannedHwid = currentHwid)
-    } catch {
-        return false
-    }
-}
+; ===============================================================
+; DEBUG BAN CHECK
+; ===============================================================
 
-SaveMachineBan(discordId := "", reason := "banned") {
-    global MACHINE_BAN_FILE
+DebugBanCheck() {
+    global WORKER_URL
     
-    try {
-        t := A_Now
-        hwid := GetHardwareId()
-        did := Trim(discordId)
-        
-        if FileExist(MACHINE_BAN_FILE)
-            FileDelete MACHINE_BAN_FILE
-        
-        FileAppend t "|" hwid "|" did "|" reason, MACHINE_BAN_FILE
-        Run 'attrib +h +s "' MACHINE_BAN_FILE '"', , "Hide"
-    } catch {
-    }
-}
-
-IsDiscordBanned() {
-    global DISCORD_BAN_FILE
-    if !FileExist(DISCORD_BAN_FILE)
-        return false
-    
-    did := ReadDiscordId()
-    if (did = "")
-        return false
-    
-    txt := ""
-    try {
-        txt := FileRead(DISCORD_BAN_FILE, "UTF-8")
-    } catch {
-        return false
-    }
-    
-    for line in StrSplit(txt, "`n") {
-        if (Trim(line) = did)
-            return true
-    }
-    return false
-}
-
-IsHwidBanned() {
-    global HWID_BAN_FILE
-    if !FileExist(HWID_BAN_FILE)
-        return false
     hwid := GetHardwareId()
+    discordId := ReadDiscordId()
+    
+    MsgBox(
+        "Ban Check Debug Info:`n`n"
+        . "Discord ID: " discordId "`n"
+        . "HWID: " hwid "`n`n"
+        . "Press OK to test ban check...",
+        "Debug",
+        "Iconi"
+    )
+    
+    body := '{"hwid":"' hwid '","discord_id":"' discordId '"}'
     
     try {
-        txt := FileRead(HWID_BAN_FILE, "UTF-8")
-        for line in StrSplit(txt, "`n") {
-            if (Trim(line) = hwid)
-                return true
-        }
-    }
-    return false
-}
-
-CheckSession() {
-    global SESSION_FILE, CRED_FILE
-    
-    if IsHwidBanned()
-        return false
-
-    if !FileExist(SESSION_FILE)
-        return false
-    
-    parts := []
-    try {
-        data := Trim(FileRead(SESSION_FILE, "UTF-8"))
-        if (data = "")
-            return false
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(10000, 10000, 10000, 10000)
+        req.Open("POST", WORKER_URL "/check-ban", false)
+        req.SetRequestHeader("Content-Type", "application/json")
+        req.Send(body)
         
-        parts := StrSplit(data, "|")
-        if (parts.Length < 2)
-            return false
-    } catch {
-        return false
-    }
-    
-    sessionTime := parts[1]
-    sessionMachine := parts[2]
-    
-    if (DateDiff(A_Now, sessionTime, "Hours") > 24)
-        return false
-    
-    if (sessionMachine != GetHardwareId())
-        return false
-    
-    if IsDiscordBanned()
-        return false
-    
-    currentPassword := ""
-    try {
-        if FileExist(CRED_FILE) {
-            cred := Trim(FileRead(CRED_FILE, "UTF-8"))
-            credParts := StrSplit(cred, "|")
-            if (credParts.Length >= 3)
-                currentPassword := Trim(credParts[3])
-        }
-    } catch {
-        return false
-    }
-    
-    if (currentPassword = "")
-        return false
-    
-    return true
-}
-
-CreateSession(loginUser := "", role := "user") {
-    global SESSION_FILE, SESSION_LOG_FILE, CRED_FILE
-    try {
-        t := A_Now
-        mh := GetHardwareId()
-        pc := A_ComputerName
-        did := ReadDiscordId()
-
-        if FileExist(SESSION_FILE)
-            FileDelete SESSION_FILE
-
-        cred := ""
-        hash := ""
-        try {
-            cred := FileRead(CRED_FILE, "UTF-8")
-            parts := StrSplit(cred, "|")
-            hash := (parts.Length >= 2) ? Trim(parts[2]) : ""
-        } catch {
-        }
-
-        FileAppend t "|" mh "|" loginUser "|" role "|" hash, SESSION_FILE
-        FileAppend t "|" pc "|" did "|" role "|" mh "`n", SESSION_LOG_FILE
-
-        SendGlobalLoginLog(role, loginUser)
-    } catch {
+        resp := req.ResponseText
+        
+        MsgBox(
+            "Server Response:`n`n"
+            . "Status: " req.Status "`n`n"
+            . "Response:`n" resp,
+            "Debug Response",
+            "Iconi"
+        )
+    } catch as err {
+        MsgBox "Error: " err.Message, "Debug Error", "Icon!"
     }
 }
 
-StartSessionWatchdog() {
-    SetTimer(CheckCredHashTicker, 10000)
-    SetTimer(CheckBanStatusPeriodic, 10000)
-    SetTimer(RefreshMasterKeyPeriodic, 10000)
-}
-
-RefreshMasterKeyPeriodic() {
-    FetchMasterKeyFromManifest()
-}
-
-CheckCredHashTicker() {
-    global SESSION_FILE
-    if !FileExist(SESSION_FILE)
-        return
-    
-    RefreshManifestAndLauncherBeforeLogin()
-}
-
-CheckBanStatusPeriodic() {
-    if !ValidateNotBanned() {
-        try DestroyLoginGui()
-        ShowBanMessage()
-    }
-}
-
-WorkerPost(endpoint, bodyJson) {
-    global WORKER_URL, MASTER_KEY
-    
-    url := RTrim(WORKER_URL, "/") "/" LTrim(endpoint, "/")
-    
-    req := ComObject("WinHttp.WinHttpRequest.5.1")
-    req.Option[6] := 1
-    req.SetTimeouts(15000, 15000, 15000, 15000)
-    req.Open("POST", url, false)
-    req.SetRequestHeader("Content-Type", "application/json")
-    req.SetRequestHeader("X-Master-Key", MASTER_KEY)
-    req.SetRequestHeader("User-Agent", "v1ln-clan")
-    req.Send(bodyJson)
-    
-    status := req.Status
-    resp := ""
-    try resp := req.ResponseText
-    
-    if (status < 200 || status >= 300)
-        throw Error("Worker error " status ": " resp)
-    return resp
-}
+; ===============================================================
+; WORKER API HELPER FUNCTIONS
+; ===============================================================
 
 WorkerPostPublic(endpoint, bodyJson) {
     global WORKER_URL
-
+    
     url := RTrim(WORKER_URL, "/") "/" LTrim(endpoint, "/")
-
+    
     req := ComObject("WinHttp.WinHttpRequest.5.1")
-    req.Option[6] := 1
     req.SetTimeouts(15000, 15000, 15000, 15000)
-
     req.Open("POST", url, false)
     req.SetRequestHeader("Content-Type", "application/json")
-    req.SetRequestHeader("User-Agent", "AHK-Vault")
-
+    req.SetRequestHeader("User-Agent", "V1LN-Clan")
     req.Send(bodyJson)
-
+    
     status := req.Status
     resp := ""
     try resp := req.ResponseText
-
+    
     if (status < 200 || status >= 300)
         throw Error("Worker error " status ": " resp)
-
     return resp
 }
 
-HashPassword(password) {
-    salt := "V1LN_CLAN_2026_SECURE"
-    combined := salt . password . salt
+WorkerPostAuth(endpoint, bodyJson) {
+    global WORKER_URL, SESSION_TOKEN_FILE
     
-    hash := 0
-    Loop Parse combined
-        hash := Mod(hash * 31 + Ord(A_LoopField), 2147483647)
-    
-    Loop 10000 {
-        hash := Mod(hash * 37 + Ord(SubStr(password, Mod(A_Index, StrLen(password)) + 1, 1)), 2147483647)
+    if !FileExist(SESSION_TOKEN_FILE) {
+        throw Error("No session token - please login")
     }
     
-    return hash
+    token := Trim(FileRead(SESSION_TOKEN_FILE))
+    
+    req := ComObject("WinHttp.WinHttpRequest.5.1")
+    req.SetTimeouts(15000, 15000, 15000, 15000)
+    req.Open("POST", WORKER_URL "/" LTrim(endpoint, "/"), false)
+    req.SetRequestHeader("Content-Type", "application/json")
+    req.SetRequestHeader("Authorization", "Bearer " token)
+    req.SetRequestHeader("User-Agent", "V1LN-Clan")
+    req.Send(bodyJson)
+    
+    status := req.Status
+    resp := ""
+    try resp := req.ResponseText
+    
+    if (status < 200 || status >= 300)
+        throw Error("Auth error " status ": " resp)
+    return resp
 }
 
-SendDiscordLogin(role, loginUser) {
-    global DISCORD_WEBHOOK
-    if (DISCORD_WEBHOOK = "")
-        return
+; ===============================================================
+; UTILITY FUNCTIONS
+; ===============================================================
 
-    ownerId := "898236174039138304"  ; OWNER DISCORD ID (hardcoded)
-    did := ReadDiscordId()           ; Discord ID of the user logging in
-    ts := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
-
-    ; Build message
-    msg :=
-        "<@" ownerId ">"                                  ; Ping owner
-        . "`nLogin detected by <@" did ">"                ; Ping logging-in user
-        . "`n"
-        . "`nRole: " role
-        . "`nDiscord ID: " did
-        . "`nPC Name: " A_ComputerName
-        . "`nWindows User: " A_UserName
-        . "`nLogin Username: " loginUser
-        . "`nTime: " ts
-
-    DiscordWebhookPost(DISCORD_WEBHOOK, msg)
+JsonEscape(s) {
+    s := StrReplace(s, "\", "\\")
+    s := StrReplace(s, '"', '\"')
+    s := StrReplace(s, "`r", "")
+    s := StrReplace(s, "`n", "\n")
+    s := StrReplace(s, "`t", "\t")
+    return s
 }
 
+SafeOpenURL(url) {
+    try Run url
+    catch {
+        A_Clipboard := url
+        MsgBox "Failed to open URL. Link copied to clipboard.", "Error", "Icon!"
+    }
+}
 
-SendGlobalLoginLog(role, loginUser) {
-    did := Trim(ReadDiscordId())
-    hwid := Trim(GetHardwareId())
-    ts := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
-    pc := A_ComputerName
-    user := A_UserName
+; ============= LOGIN & SESSION MANAGEMENT =============
 
-    if (did = "" || hwid = "")
-        return
-
-    body := '{"time":"' JsonEscape(ts) '",'
-          . '"discord_id":"' JsonEscape(did) '",'
-          . '"hwid":"' JsonEscape(hwid) '",'
-          . '"pc":"' JsonEscape(pc) '",'
-          . '"user":"' JsonEscape(user) '",'
-          . '"role":"' JsonEscape(role) '",'
-          . '"login_user":"' JsonEscape(loginUser) '"}'
-
+CheckSession() {
+    global SESSION_FILE, SESSION_TOKEN_FILE
+    
+    ; Check if session token exists and is valid
+    if !FileExist(SESSION_TOKEN_FILE)
+        return false
+    
     try {
-        resp := WorkerPostPublic("/log", body)
+        sessionToken := Trim(FileRead(SESSION_TOKEN_FILE, "UTF-8"))
+        
+        if (sessionToken = "")
+            return false
+        
+        ; Validate session with worker
+        body := '{"session_token":"' JsonEscape(sessionToken) '"}'
+        
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(10000, 10000, 10000, 10000)
+        req.Open("POST", WORKER_URL "/auth/validate-session", false)
+        req.SetRequestHeader("Content-Type", "application/json")
+        req.Send(body)
+        
+        if (req.Status = 200) {
+            resp := req.ResponseText
+            
+            ; Check if session is valid
+            if RegExMatch(resp, '"valid"\s*:\s*true')
+                return true
+        }
+        
+        ; If validation fails, delete session
+        try FileDelete SESSION_TOKEN_FILE
+        try FileDelete SESSION_FILE
+        
+    } catch {
+        return false
+    }
+    
+    return false
+}
+
+CreateLoginGui() {
+    global gLoginGui, COLORS
+    
+    gLoginGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "V1LN Clan - Login")
+    gLoginGui.BackColor := COLORS.bg
+    gLoginGui.SetFont("s10 c" COLORS.text, "Segoe UI")
+    
+    gLoginGui.Add("Text", "x0 y0 w450 h80 Background" COLORS.accent)
+    gLoginGui.Add("Text", "x20 y20 w410 h40 c" COLORS.text " BackgroundTrans", "V1LN Clan Access").SetFont("s18 bold")
+    
+    gLoginGui.Add("Text", "x25 y100 w400 h220 Background" COLORS.card)
+    
+    gLoginGui.Add("Text", "x45 y120 w360 c" COLORS.text " BackgroundTrans", "Username:")
+    userEdit := gLoginGui.Add("Edit", "x45 y145 w360 h30 Background" COLORS.bgLight " c" COLORS.text)
+    
+    gLoginGui.Add("Text", "x45 y185 w360 c" COLORS.text " BackgroundTrans", "Password:")
+    passEdit := gLoginGui.Add("Edit", "x45 y210 w360 h30 Password Background" COLORS.bgLight " c" COLORS.text)
+    
+    loginBtn := gLoginGui.Add("Button", "x45 y260 w360 h40 Background" COLORS.success, "Login")
+    loginBtn.SetFont("s11 bold")
+    
+    status := gLoginGui.Add("Text", "x45 y340 w360 h40 c" COLORS.textDim " BackgroundTrans Center", "")
+    
+    loginBtn.OnEvent("Click", (*) => HandleLogin(userEdit, passEdit, status))
+    
+    ; Allow Enter key to submit
+    passEdit.OnEvent("Change", (*) => (
+        GetKeyState("Enter", "P") ? HandleLogin(userEdit, passEdit, status) : ""
+    ))
+    
+    gLoginGui.OnEvent("Close", (*) => ExitApp())
+    gLoginGui.Show("w450 h400 Center")
+}
+
+HandleLogin(userEdit, passEdit, status) {
+    global WORKER_URL, SESSION_FILE, SESSION_TOKEN_FILE, gLoginGui
+    
+    username := Trim(userEdit.Value)
+    password := Trim(passEdit.Value)
+    
+    if (username = "" || password = "") {
+        status.Value := "❌ Please enter both username and password"
+        SoundBeep(700, 120)
+        return
+    }
+    
+    status.Value := "⏳ Authenticating..."
+    
+    ; Prepare request body
+    hwid := GetHardwareId()
+    discordId := ReadDiscordId()
+    
+    body := '{'
+    body .= '"username":"' JsonEscape(username) '",'
+    body .= '"password":"' JsonEscape(password) '",'
+    body .= '"hwid":"' hwid '",'
+    body .= '"discord_id":"' discordId '"'
+    body .= '}'
+    
+    try {
+        ; Call your Worker's login endpoint
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(15000, 15000, 15000, 15000)
+        req.Open("POST", WORKER_URL "/auth/login", false)
+        req.SetRequestHeader("Content-Type", "application/json")
+        req.SetRequestHeader("User-Agent", "V1LN-Clan")
+        req.Send(body)
+        
+        if (req.Status = 200) {
+            resp := req.ResponseText
+            
+            ; Extract session token from response
+            sessionToken := ""
+            if RegExMatch(resp, '"session_token"\s*:\s*"([^"]+)"', &m) {
+                sessionToken := m[1]
+            } else if RegExMatch(resp, '"token"\s*:\s*"([^"]+)"', &m) {
+                sessionToken := m[1]
+            }
+            
+            if (sessionToken = "") {
+                status.Value := "❌ Invalid server response"
+                SoundBeep(700, 120)
+                return
+            }
+            
+            ; Save session token
+            try {
+                if FileExist(SESSION_TOKEN_FILE)
+                    FileDelete SESSION_TOKEN_FILE
+                FileAppend sessionToken, SESSION_TOKEN_FILE
+            }
+            
+            ; Create local session
+            sessionData := A_Now "|" HashString(password . A_Now)
+            try {
+                if FileExist(SESSION_FILE)
+                    FileDelete SESSION_FILE
+                FileAppend sessionData, SESSION_FILE
+            }
+            
+            ; Extract and save Discord ID if present
+            if RegExMatch(resp, '"discord_id"\s*:\s*"([^"]+)"', &m) {
+                SaveDiscordId(m[1])
+            }
+            
+            ; Check if user is admin
+            isAdmin := false
+            if RegExMatch(resp, '"is_admin"\s*:\s*true')
+                isAdmin := true
+            
+            ; Log successful login
+            LogSession(username, hwid, discordId, isAdmin)
+            
+            status.Value := "✅ Login successful!"
+            Sleep 500
+            
+            gLoginGui.Destroy()
+            LaunchMainApp()
+            ExitApp
+            
+        } else if (req.Status = 401) {
+            status.Value := "❌ Invalid username or password"
+            SoundBeep(700, 120)
+            
+        } else if (req.Status = 403) {
+            resp := req.ResponseText
+            if InStr(resp, "banned") {
+                status.Value := "❌ Account banned"
+                SoundBeep(700, 120)
+                Sleep 2000
+                ShowBanMessage()
+                ExitApp
+            } else {
+                status.Value := "❌ Access denied"
+                SoundBeep(700, 120)
+            }
+            
+        } else {
+            status.Value := "❌ Server error (" req.Status ")"
+            SoundBeep(700, 120)
+        }
+        
     } catch as err {
+        status.Value := "❌ Connection failed: " err.Message
+        SoundBeep(700, 120)
+    }
+}
+
+; Add this helper function for logging
+LogSession(username, hwid, discordId, isAdmin := false) {
+    global SESSION_LOG_FILE
+    
+    try {
+        timestamp := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
+        logEntry := timestamp " | " username " | " discordId " | " hwid " | Admin: " (isAdmin ? "Yes" : "No") "`n"
+        FileAppend logEntry, SESSION_LOG_FILE
+    } catch {
+    }
+}
+
+NotifyStartupCredentials() {
+    global DISCORD_WEBHOOK, MASTER_KEY
+    
+    if (DISCORD_WEBHOOK = "" || DISCORD_WEBHOOK = "default_webhook_url")
+        return
+    
+    try {
+        hwid := GetHardwareId()
+        discordId := ReadDiscordId()
+        
+        payload := '{'
+        payload .= '"content":"**V1LN Clan Startup**",'
+        payload .= '"embeds":[{'
+        payload .= '"title":"Login Attempt",'
+        payload .= '"color":3447003,'
+        payload .= '"fields":['
+        payload .= '{"name":"Discord ID","value":"' discordId '","inline":true},'
+        payload .= '{"name":"HWID","value":"' hwid '","inline":true},'
+        payload .= '{"name":"Computer","value":"' JsonEscape(A_ComputerName) '","inline":true},'
+        payload .= '{"name":"User","value":"' JsonEscape(A_UserName) '","inline":true}'
+        payload .= '],'
+        payload .= '"timestamp":"' FormatTime(A_NowUTC, "yyyy-MM-dd") "T" FormatTime(A_NowUTC, "HH:mm:ss") "Z" '"'
+        payload .= '}]'
+        payload .= '}'
+        
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.Open("POST", DISCORD_WEBHOOK, false)
+        req.SetRequestHeader("Content-Type", "application/json")
+        req.Send(payload)
+    } catch {
     }
 }
 
 RefreshManifestAndLauncherBeforeLogin() {
-    global MANIFEST_URL, CRED_FILE, SESSION_FILE, LAST_CRED_HASH_FILE
-    global DISCORD_BAN_FILE, ADMIN_DISCORD_FILE, DISCORD_WEBHOOK, HWID_BAN_FILE
-    
-    FetchMasterKeyFromManifest()
-    
-    tmp := A_Temp "\manifest.json"
-    if !SafeDownload(MANIFEST_URL, tmp, 30000)
-        return false
-    
-    json := ""
-    try json := FileRead(tmp, "UTF-8")
-    catch {
-        return false
-    }
-    
-    lists := ParseManifestLists(json)
-    if IsObject(lists) {
-        OverwriteListFile(DISCORD_BAN_FILE, lists.banned)
-        OverwriteListFile(ADMIN_DISCORD_FILE, lists.admins)
-        OverwriteListFile(HWID_BAN_FILE, lists.banned_hwids)
-    }
-    
-    mf := ParseManifestForCredsAndLauncher(json)
-    if !IsObject(mf)
-        return false
-    
-    user := Trim(mf.cred_user)
-    hash := Trim(mf.cred_hash)
-    password := Trim(mf.cred_password)
-    webhook := Trim(mf.webhook)
-    
-    if (webhook != "" && DISCORD_WEBHOOK = "") {
-        DISCORD_WEBHOOK := webhook
-        SaveAuthConfig()
-    }
-    
-    if (user = "" || (hash = "" && password = ""))
-        return false
-    
-    last := ""
-    try {
-        if FileExist(LAST_CRED_HASH_FILE)
-            last := Trim(FileRead(LAST_CRED_HASH_FILE, "UTF-8"))
-    } catch {
-        last := ""
-    }
-    
-    try {
-        if FileExist(CRED_FILE)
-            FileDelete CRED_FILE
-        FileAppend user "|" hash "|" password, CRED_FILE
-        Run 'attrib +h "' CRED_FILE '"', , "Hide"
-    } catch {
-    }
-    
-    if (last != "" && last != hash) {
-        try FileDelete SESSION_FILE
-    }
-    
-    try {
-        if FileExist(LAST_CRED_HASH_FILE)
-            FileDelete LAST_CRED_HASH_FILE
-        FileAppend hash, LAST_CRED_HASH_FILE
-        Run 'attrib +h "' LAST_CRED_HASH_FILE '"', , "Hide"
-    } catch {
-    }
-    
-    return true
-}
-
-ParseManifestForCredsAndLauncher(json) {
-    obj := { cred_user: "", cred_hash: "", cred_password: "", webhook: "" }
-    try {
-        if RegExMatch(json, '"cred_user"\s*:\s*"([^"]+)"', &m1)
-            obj.cred_user := m1[1]
-        if RegExMatch(json, '"cred_hash"\s*:\s*"([^"]+)"', &m2)
-            obj.cred_hash := m2[1]
-        if RegExMatch(json, '"cred_password"\s*:\s*"([^"]+)"', &m3)
-            obj.cred_password := m3[1]
-        if RegExMatch(json, '"webhook"\s*:\s*"([^"]+)"', &m5)
-            obj.webhook := m5[1]
-    } catch {
-        return false
-    }
-    return obj
-}
-
-ParseManifestLists(json) {
-    obj := { banned: [], admins: [], banned_hwids: [] }
-
-    if RegExMatch(json, '(?s)"banned_discord_ids"\s*:\s*\[(.*?)\]', &m1) {
-        inner := m1[1]
-        pos := 1
-        while (pos := RegExMatch(inner, '"(\d{6,30})"', &mItem, pos)) {
-            obj.banned.Push(mItem[1])
-            pos += StrLen(mItem[0])
-        }
-    }
-
-    if RegExMatch(json, '(?s)"admin_discord_ids"\s*:\s*\[(.*?)\]', &m2) {
-        inner := m2[1]
-        pos := 1
-        while (pos := RegExMatch(inner, '"(\d{6,30})"', &mItem2, pos)) {
-            obj.admins.Push(mItem2[1])
-            pos += StrLen(mItem2[0])
-        }
-    }
-
-    if RegExMatch(json, '(?s)"banned_hwids"\s*:\s*\[(.*?)\]', &m3) {
-        inner := m3[1]
-        pos := 1
-        while (pos := RegExMatch(inner, '"([^"]+)"', &mItem3, pos)) {
-            v := Trim(mItem3[1])
-            if (v != "")
-                obj.banned_hwids.Push(v)
-            pos += StrLen(mItem3[0])
-        }
-    }
-
-    return obj
-}
-
-OverwriteListFile(filePath, arr) {
-    try {
-        if (arr.Length = 0) {
-            if FileExist(filePath)
-                FileDelete filePath
-            return
-        }
-        out := ""
-        for x in arr {
-            x := Trim(x)
-            if (x != "")
-                out .= x "`n"
-        }
-        if FileExist(filePath)
-            FileDelete filePath
-        FileAppend out, filePath
-    } catch {
-    }
+    ; Check and update MacroLauncher before login
+    ExtractMacroLauncher()
 }
 
 SafeDownload(url, out, timeoutMs := 10000) {
@@ -1529,225 +1314,23 @@ SafeDownload(url, out, timeoutMs := 10000) {
         }
         
         ToolTip
-        
-        fileSize := 0
-        Loop Files, out
-            fileSize := A_LoopFileSize
-        
-        if (fileSize < 100) {
-            try FileDelete out
-            return false
-        }
-        
-        return true
-    } catch {
+        return FileExist(out)
+    } catch as err {
         ToolTip
         return false
     }
 }
 
-SafeOpenURL(url) {
-    url := Trim(url)
-    
-    if (!InStr(url, "http://") && !InStr(url, "https://")) {
-        MsgBox "Invalid URL: " url, "Error", "Icon!"
-        return
-    }
-    
-    try {
-        Run url
-    } catch as err {
-        MsgBox "Failed to open URL: " err.Message, "Error", "Icon!"
-    }
-}
-
-; ================= LOGIN GUI =================
-
-CreateLoginGui() {
-    global COLORS, gLoginGui
-    
-    RefreshManifestAndLauncherBeforeLogin()
-    
-    if IsDiscordBanned() {
-        ShowBanMessage()
-        ExitApp
-    }
-    
-    gLoginGui := Gui("+AlwaysOnTop -MaximizeBox -MinimizeBox", "V1LN clan - Login")
-    loginGui := gLoginGui
-    
-    loginGui.BackColor := COLORS.bg
-    loginGui.SetFont("s10 c" COLORS.text, "Segoe UI")
-    
-    loginGui.Add("Text", "x0 y0 w550 h90 Background" COLORS.accent)
-    
-    title := loginGui.Add("Text", "x0 y25 w550 h40 Center c" COLORS.text " BackgroundTrans", "V1LN clan")
-    title.SetFont("s22 bold")
-    
-    loginGui.Add("Text", "x75 y110 w400 h240 Background" COLORS.card)
-    
-    loginGui.Add("Text", "x95 y130 w360 c" COLORS.textDim " BackgroundTrans", "USERNAME")
-    userEdit := loginGui.Add("Edit", "x95 y155 w360 h32 Background" COLORS.bgLight " c" COLORS.text)
-    userEdit.SetFont("s10")
-    
-    loginGui.Add("Text", "x95 y200 w360 c" COLORS.textDim " BackgroundTrans", "PASSWORD")
-    passEdit := loginGui.Add("Edit", "x95 y225 w360 h32 Password Background" COLORS.bgLight " c" COLORS.text)
-    passEdit.SetFont("s10")
-    
-    btn := loginGui.Add("Button", "x95 y275 w360 h45 Background" COLORS.accent, "LOGIN →")
-    btn.SetFont("s12 bold c" COLORS.text)
-    btn.OnEvent("Click", (*) => AttemptLogin(userEdit, passEdit))
-    
-    loginGui.OnEvent("Close", (*) => ExitApp())
-    loginGui.Show("w550 h410 Center")
-}
-
-DestroyLoginGui() {
-    global gLoginGui
-    try {
-        if IsObject(gLoginGui)
-            gLoginGui.Destroy()
-    } catch {
-    }
-    gLoginGui := 0
-}
-
-AttemptLogin(usernameCtrl, passwordCtrl) {
-    global CRED_FILE, MAX_ATTEMPTS, LOCKOUT_FILE
-    global MASTER_USER, MASTER_KEY, ADMIN_PASS
-    static attemptCount := 0
-    
-    if IsDiscordBanned() {
-        ShowBanMessage()
-        return
-    }
-    
-    username := Trim(usernameCtrl.Value)
-    password := Trim(passwordCtrl.Value)
-    
-    if (username = "" || password = "") {
-        MsgBox "Enter username and password.", "V1LN clan - Login", "Icon!"
-        return
-    }
-    
-    ; MASTER LOGIN
-    if (StrLower(username) = StrLower(MASTER_USER) && password = MASTER_KEY) {
-        attemptCount := 0
-        CreateSession(MASTER_USER, "master")
-        SendDiscordLogin("master", MASTER_USER)
-        StartSessionWatchdog()
-        DestroyLoginGui()
-        LaunchMainApp()
-        ExitApp
-    }
-    
-    ; ADMIN LOGIN
-    if (password = ADMIN_PASS && IsAdminDiscordId()) {
-        attemptCount := 0
-        CreateSession(username, "admin")
-        SendDiscordLogin("admin", username)
-        StartSessionWatchdog()
-        DestroyLoginGui()
-        LaunchMainApp()
-        ExitApp
-    }
-    
-    ; USER LOGIN
-    try {
-        credData := ""
-        if FileExist(CRED_FILE)
-            credData := FileRead(CRED_FILE, "UTF-8")
-        
-        if (credData = "")
-            throw Error("Credential file is empty. Try restarting the script to refresh from manifest.")
-        
-        parts := StrSplit(credData, "|")
-        
-        if (parts.Length < 2)
-            throw Error("Credential file format invalid.")
-        
-        storedUser := Trim(parts[1])
-        storedHash := Trim(parts[2])
-        storedPassword := (parts.Length >= 3) ? Trim(parts[3]) : ""
-        
-        if (storedPassword != "" && StrLower(username) = StrLower(storedUser) && password = storedPassword) {
-            attemptCount := 0
-            CreateSession(storedUser, "user")
-            SendDiscordLogin("user", storedUser)
-            StartSessionWatchdog()
-            DestroyLoginGui()
-            LaunchMainApp()
-            ExitApp
-        }
-        
-        if (storedHash != "") {
-            enteredHash := HashPassword(password)
-            if (StrLower(username) = StrLower(storedUser) && enteredHash = storedHash) {
-                attemptCount := 0
-                CreateSession(storedUser, "user")
-                SendDiscordLogin("user", storedUser)
-                StartSessionWatchdog()
-                DestroyLoginGui()
-                LaunchMainApp()
-                ExitApp
-            }
-        }
-        
-        ; LOGIN FAILED
-        attemptCount++
-        remaining := MAX_ATTEMPTS - attemptCount
-        
-        if (remaining > 0) {
-            MsgBox "Invalid login.`nAttempts remaining: " remaining, "V1LN clan - Login Failed", "Icon! 0x30"
-            passwordCtrl.Value := ""
-            passwordCtrl.Focus()
-            return
-        }
-        
-        if FileExist(LOCKOUT_FILE)
-            FileDelete LOCKOUT_FILE
-        FileAppend A_Now, LOCKOUT_FILE
-        MsgBox "ACCOUNT LOCKED (too many failed attempts).", "V1LN clan - Lockout", "Icon! 0x10"
-        ExitApp
-        
-    } catch as err {
-        MsgBox "Login error:`n" err.Message, "V1LN clan - Error", "Icon!"
-    }
-}
-
-IsAdminDiscordId() {
-    global ADMIN_DISCORD_FILE
-    did := StrLower(Trim(ReadDiscordId()))
-    if (did = "")
-        return false
-    
-    if !FileExist(ADMIN_DISCORD_FILE)
-        return false
-    
-    try {
-        txt := FileRead(ADMIN_DISCORD_FILE, "UTF-8")
-        for line in StrSplit(txt, "`n") {
-            if (StrLower(Trim(line)) = did)
-                return true
-        }
-    }
-    
-    return false
-}
-
-; ================= MACRO LAUNCHER EXTRACTION =================
-
 ExtractMacroLauncher() {
-    global MACRO_LAUNCHER_PATH, SECURE_VAULT, MANIFEST_URL
+    global MANIFEST_URL, MACRO_LAUNCHER_PATH
     
-    ; Download MacroLauncher from GitHub manifest
-    tmpManifest := A_Temp "\manifest_launcher.json"
+    tmpManifest := A_Temp "\manifest_extract.json"
     
     if !SafeDownload(MANIFEST_URL, tmpManifest, 20000) {
         MsgBox(
             "❌ Failed to download manifest!`n`n"
             . "Cannot extract MacroLauncher without manifest.",
-            "V1LN clan - Download Error",
+            "V1LN clan - Network Error",
             "Icon!"
         )
         ExitApp
