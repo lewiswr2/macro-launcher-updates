@@ -33,7 +33,7 @@ global COLORS := {
     bgLight: "0x13171d",
     card: "0x161b22",
     cardHover: "0x1c2128",
-    accent: "0xd29922",
+    accent: "0x0044ff",
     accentHover: "0x2ea043",
     accentAlt: "0x1f6feb",
     text: "0xe6edf3",
@@ -2650,10 +2650,6 @@ CreateFullWidthCard(win, item, x, y, w, h) {
     titleCtrl.SetFont("s13 bold")
     win.__cards.Push(titleCtrl)
     
-    creatorCtrl := win.Add("Text", "x" (x + 120) " y" (y + 50) " w340 c" COLORS.textDim " BackgroundTrans", "by " item.info.Creator)
-    creatorCtrl.SetFont("s10")
-    win.__cards.Push(creatorCtrl)
-    
     versionCtrl := win.Add("Text", "x" (x + 120) " y" (y + 75) " w60 h22 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
     versionCtrl.SetFont("s9 bold")
     win.__cards.Push(versionCtrl)
@@ -2744,10 +2740,6 @@ CreateGridCard(win, item, x, y, w, h) {
     titleCtrl := win.Add("Text", "x" (x + 90) " y" (y + 15) " w" (w - 190) " h30 c" COLORS.text " BackgroundTrans", item.info.Title)
     titleCtrl.SetFont("s11 bold")
     win.__cards.Push(titleCtrl)
-    
-    creatorCtrl := win.Add("Text", "x" (x + 90) " y" (y + 40) " w" (w - 190) " c" COLORS.textDim " BackgroundTrans", "by " item.info.Creator)
-    creatorCtrl.SetFont("s9")
-    win.__cards.Push(creatorCtrl)
     
     versionCtrl := win.Add("Text", "x" (x + 90) " y" (y + 63) " w50 h18 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
     versionCtrl.SetFont("s8 bold")
@@ -3077,7 +3069,6 @@ JsonEscape(s) {
 ReadMacroInfo(macroDir) {
     info := {
         Title: "",
-        Creator: "",
         Version: "",
         Links: "",
         Released: "Yes"  ; Default to Yes if not specified
@@ -3120,8 +3111,6 @@ ReadMacroInfo(macroDir) {
             case "title":
                 if (v != "")
                     info.Title := v
-            case "creator":
-                info.Creator := v
             case "version":
                 info.Version := v
             case "links":
@@ -3133,8 +3122,6 @@ ReadMacroInfo(macroDir) {
     
     if (info.Version = "")
         info.Version := "1.0"
-    if (info.Creator = "")
-        info.Creator := "Unknown"
     
     return info
 }
