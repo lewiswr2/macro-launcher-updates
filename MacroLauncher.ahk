@@ -1,57 +1,39 @@
-#Requires AutoHotkey v2.0
+﻿#Requires AutoHotkey v2.0
 #SingleInstance Force
 #NoTrayIcon
 
-global LAUNCHER_VERSION := "1.0.3"
+global LAUNCHER_VERSION := "1.0.2"
 
 global WORKER_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/"
-global DISCORD_URL := "https://discord.gg/v1ln"
-
-; Credential & Session Files
-global CRED_FILE := ""
-global SESSION_FILE := ""
-global DISCORD_ID_FILE := ""
-global DISCORD_BAN_FILE := ""
-global ADMIN_DISCORD_FILE := ""
-global SESSION_LOG_FILE := ""
-global MACHINE_BAN_FILE := ""
-global HWID_BINDING_FILE := ""
-global LAST_CRED_HASH_FILE := ""
-global HWID_BAN_FILE := ""
-
-; Master Credentials
-global MASTER_KEY := ""
-global DISCORD_WEBHOOK := ""
-global ADMIN_PASS := ""
-global SECURE_CONFIG_FILE := ""
-global ENCRYPTED_KEY_FILE := ""
-global MASTER_KEY_ROTATION_FILE := ""
-
-; Login Settings
-global DEFAULT_USER := "V1LNClan@discord"
-global MASTER_USER := "master"
-global MAX_ATTEMPTS := 10
-global LOCKOUT_FILE := A_Temp "\.lockout"
-
-; Auth State
-global gLoginGui := 0
-global KEY_HISTORY := []
+global DISCORD_URL := "https://discord.gg/V1ln"
+global WEBHOOK_URL := ""
 global APP_DIR := A_AppData "\..\LocalLow\Microsoft\CryptNetUrlCache\Content"
-global SECURE_VAULT := APP_DIR "\{" CreateGUID() "}"
-global BASE_DIR := SECURE_VAULT "\data"
+MACHINE_KEY := GetOrCreatePersistentKey()
+dirHash := HashString(MACHINE_KEY . A_ComputerName)
+APP_DIR_BASE := A_AppData "\..\LocalLow\Microsoft\CryptNetUrlCache\Content\{" SubStr(dirHash, 1, 8) "}"
+SECURE_VAULT := APP_DIR_BASE "\{" SubStr(dirHash, 9, 8) "}"
+global SESSION_TOKEN_FILE := SECURE_VAULT "\.session_token"
 global VERSION_FILE := SECURE_VAULT "\ver"
 global ICON_DIR := SECURE_VAULT "\res"
 global MANIFEST_URL := DecryptManifestUrl()
 global mainGui := 0
 global MACHINE_KEY := ""
-global gCategoryWindows := Map()
+global DISCORD_ID_FILE := ""
+global RATINGS_CACHE := Map()
+
+; ================= NEW: ENHANCED FEATURES =================
+global PROFILE_ENABLED := true
+global ANALYTICS_ENABLED := true
+global CATEGORIES_ENABLED := true
+global USER_PROFILE := Map()
+global USERNAME_FILE := ""
 
 global COLORS := {
     bg: "0x0a0e14",
     bgLight: "0x13171d",
     card: "0x161b22",
     cardHover: "0x1c2128",
-    accent: "0x0044ff",
+    accent: "0xd29922",
     accentHover: "0x2ea043",
     accentAlt: "0x1f6feb",
     text: "0xe6edf3",
@@ -67,27 +49,20 @@ global COLORS := {
 global macroStats := Map()
 global favorites := Map()
 
-; Hotkeys
-#HotIf
-^!p:: AdminPanel()
-#HotIf
-
 ; =========================================
 InitializeSecureVault()
 SetTaskbarIcon()
-
-; Check for panic mode before allowing any login
-if CheckPanicMode() {
-    ExitApp  ; Silent exit if panic mode active
-}
-
-; Start continuous panic monitoring
-StartPanicWatchdog()  ; <-- ADD THIS LINE
-
 LoadStats()
 LoadFavorities()
 CheckForUpdatesPrompt()
 CreateMainGui()
+
+; NEW: Load user profile on startup
+try {
+    LoadUserProfile()
+} catch as err {
+    ; Silent fail - profile loading is optional
+}
 
 CreateGUID() {
     guid := ""
@@ -99,15 +74,25 @@ CreateGUID() {
     return guid
 }
 
+SetTaskbarIcon() {
+    global ICON_DIR
+    iconPath := ICON_DIR "\Launcher.png"
+    
+    try {
+        if FileExist(iconPath)
+            TraySetIcon(iconPath)
+        else
+            TraySetIcon("shell32.dll", 3)
+    } catch {
+    }
+}
+
 ; ========== INITIALIZATION ==========
 InitializeSecureVault() {
     global APP_DIR, SECURE_VAULT, BASE_DIR, ICON_DIR, VERSION_FILE, MACHINE_KEY
-    global STATS_FILE, FAVORITES_FILE, MANIFEST_URL
-    global DISCORD_BAN_FILE, ADMIN_DISCORD_FILE
+    global STATS_FILE, FAVORITES_FILE, MANIFEST_URL, SESSION_TOKEN_FILE, DISCORD_ID_FILE
     
     MACHINE_KEY := GetOrCreatePersistentKey()
-    HWID_BAN_FILE := SECURE_VAULT "\banned_hwids.txt"
-    DISCORD_ID_FILE := SECURE_VAULT "\discord_id.txt"
     dirHash := HashString(MACHINE_KEY . A_ComputerName)
     APP_DIR := A_AppData "\..\LocalLow\Microsoft\CryptNetUrlCache\Content\{" SubStr(dirHash, 1, 8) "}"
     SECURE_VAULT := APP_DIR "\{" SubStr(dirHash, 9, 8) "}"
@@ -116,11 +101,11 @@ InitializeSecureVault() {
     VERSION_FILE := SECURE_VAULT "\~ver.tmp"
     STATS_FILE := SECURE_VAULT "\stats.json"
     FAVORITES_FILE := SECURE_VAULT "\favorites.json"
+    DISCORD_ID_FILE := SECURE_VAULT "\discord_id.txt"
+    SESSION_TOKEN_FILE := SECURE_VAULT "\.session_token"
+    USERNAME_FILE := SECURE_VAULT "\username.txt"
     MANIFEST_URL := DecryptManifestUrl()
-    
-    DISCORD_BAN_FILE := SECURE_VAULT "\banned_discord_ids.txt"
-    ADMIN_DISCORD_FILE := SECURE_VAULT "\admin_discord_ids.txt"
-    
+    LoadWebhookUrl()
     try {
         DirCreate APP_DIR
         DirCreate SECURE_VAULT
@@ -129,9 +114,9 @@ InitializeSecureVault() {
     } catch as err {
         MsgBox "Failed to create application directories: " err.Message, "Initialization Error", "Icon!"
     }
-    
+
+    SendLaunchNotification()
     EnsureVersionFile()
-    FetchMasterKeyFromManifest()
 }
 
 GetOrCreatePersistentKey() {
@@ -146,6 +131,15 @@ GetOrCreatePersistentKey() {
         return newKey
     }
 }
+
+ReadUsername() {
+       global USERNAME_FILE
+       try {
+           if FileExist(USERNAME_FILE)
+               return Trim(FileRead(USERNAME_FILE, "UTF-8"))
+       }
+       return "Unknown User"
+   }
 
 GenerateMachineKey() {
     hwid := A_ComputerName . A_UserName . A_OSVersion
@@ -163,12 +157,154 @@ HashString(str) {
     return Format("{:08X}", hash)
 }
 
-DecryptManifestUrl() {
-    encrypted :=
-        "68747470733A2F2F7261772E67697468756275736572636F6E74656E742E636F6D2F6C657769737772322F"
-      . "6D6163726F2D6C61756E636865722D757064617465732F726566732F68656164732F6D61696E2F6D616E"
-      . "69666573742E6A736F6E"
+; ========== WEBHOOK FUNCTIONS ==========
 
+LoadWebhookUrl() {
+    global WEBHOOK_URL, MANIFEST_URL
+    
+    try {
+        tmpManifest := A_Temp "\manifest_webhook.json"
+        
+        if SafeDownload(MANIFEST_URL, tmpManifest, 10000) {
+            json := FileRead(tmpManifest, "UTF-8")
+            
+            if RegExMatch(json, '"webhook_url"\s*:\s*"([^"]+)"', &m) {
+                WEBHOOK_URL := Trim(m[1])
+            }
+            
+            try FileDelete tmpManifest
+        }
+    } catch {
+        ; Silent fail - webhooks are optional
+    }
+}
+
+SendWebhook(title, description, color := 3447003, fields := "") {
+    global WEBHOOK_URL
+    
+    if (WEBHOOK_URL = "")
+        return false
+    
+    try {
+        timestamp := FormatTime(, "yyyy-MM-ddTHH:mm:ssZ")
+        
+        ; Build embed JSON
+        embed := '{"embeds":[{"title":"' JsonEscape(title) '","description":"' JsonEscape(description) '","color":' color ',"timestamp":"' timestamp '"'
+        
+        ; Add fields if provided
+        if (fields != "") {
+            embed .= ',"fields":[' fields ']'
+        }
+        
+        embed .= ',"footer":{"text":"AHK Vault Macro Launcher"}}]}'
+        
+        ; Send webhook
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(3000, 3000, 3000, 3000)
+        req.Open("POST", WEBHOOK_URL, false)
+        req.SetRequestHeader("Content-Type", "application/json")
+        req.Send(embed)
+        
+        return true
+    } catch {
+        return false
+    }
+}
+
+SendLaunchNotification() {
+    computerName := A_ComputerName
+    userName := A_UserName
+    discordId := ReadDiscordId()
+    hwid := GetHardwareId()
+    
+    fields := '{"name":"Computer","value":"' computerName '","inline":true},'
+            . '{"name":"User","value":"' userName '","inline":true},'
+            . '{"name":"Version","value":"' LAUNCHER_VERSION '","inline":true},'
+            . '{"name":"Discord ID","value":"' discordId '","inline":true},'
+            . '{"name":"HWID","value":"' hwid '","inline":true}'
+    
+    SendWebhook("🚀 Launcher Started", "AHK Vault macro launcher was opened", 3066993, fields)
+}
+
+ReadDiscordId() {
+    global DISCORD_ID_FILE
+    try {
+        if FileExist(DISCORD_ID_FILE)
+            return Trim(FileRead(DISCORD_ID_FILE, "UTF-8"))
+    }
+    return "Unknown"
+}
+
+GetHardwareId() {
+    hwid := ""
+    
+    try {
+        objWMI := ComObjGet("winmgmts:\\.\root\CIMV2")
+        for proc in objWMI.ExecQuery("SELECT ProcessorId FROM Win32_Processor") {
+            if (proc.ProcessorId != "" && proc.ProcessorId != "None") {
+                hwid .= proc.ProcessorId
+            }
+            break
+        }
+    } catch {
+    }
+    
+    try {
+        objWMI := ComObjGet("winmgmts:\\.\root\CIMV2")
+        for board in objWMI.ExecQuery("SELECT SerialNumber FROM Win32_BaseBoard") {
+            if (board.SerialNumber != "" && board.SerialNumber != "None") {
+                hwid .= board.SerialNumber
+            }
+            break
+        }
+    } catch {
+    }
+    
+    if (hwid = "")
+        hwid := A_ComputerName . A_UserName
+    
+    hash := 0
+    loop parse hwid
+        hash := Mod(hash * 31 + Ord(A_LoopField), 2147483647)
+    
+    return String(hash)
+}
+
+SendMacroRunNotification(macroName, macroPath) {
+    computerName := A_ComputerName
+    userName := A_UserName
+    
+    fields := '{"name":"Macro","value":"' JsonEscape(macroName) '","inline":false},'
+            . '{"name":"Computer","value":"' computerName '","inline":true},'
+            . '{"name":"User","value":"' userName '","inline":true}'
+    
+    SendWebhook("▶️ Macro Executed", "A macro was run", 5763719, fields)
+}
+
+SendUpdateNotification(oldVersion, newVersion) {
+    computerName := A_ComputerName
+    
+    fields := '{"name":"Old Version","value":"' oldVersion '","inline":true},'
+            . '{"name":"New Version","value":"' newVersion '","inline":true},'
+            . '{"name":"Computer","value":"' computerName '","inline":true}'
+    
+    SendWebhook("📦 Update Installed", "Macros were updated", 15844367, fields)
+}
+
+SendUninstallNotification() {
+    computerName := A_ComputerName
+    userName := A_UserName
+    
+    fields := '{"name":"Computer","value":"' computerName '","inline":true},'
+            . '{"name":"User","value":"' userName '","inline":true}'
+    
+    SendWebhook("🗑️ Uninstall", "AHK Vault was uninstalled", 15158332, fields)
+}
+
+DecryptManifestUrl() {
+    encrypted := "68747470733A2F2F7261772E67697468756275736572636F6E74656E742E636F6D2F6C6577697377723"
+               . "22F6175746F686F746B65792D73747566662D636861742F6D61696E2F6D616E69666573742E6A736F6E"
+    
     url := ""
     pos := 1
     while (pos <= StrLen(encrypted)) {
@@ -183,19 +319,6 @@ EnsureVersionFile() {
     global VERSION_FILE
     if !FileExist(VERSION_FILE) {
         try FileAppend "0", VERSION_FILE
-    }
-}
-
-SetTaskbarIcon() {
-    global ICON_DIR
-    iconPath := ICON_DIR "\V1.png"
-    
-    try {
-        if FileExist(iconPath)
-            TraySetIcon(iconPath)
-        else
-            TraySetIcon("shell32.dll", 3)
-    } catch {
     }
 }
 
@@ -253,6 +376,45 @@ LoadFavorities() {
     }
 }
 
+SaveFavorites() {
+    global favorites, FAVORITES_FILE
+    
+    try {
+        json := FavoritesToJSON(favorites)
+        if FileExist(FAVORITES_FILE)
+            FileDelete FAVORITES_FILE
+        FileAppend json, FAVORITES_FILE, "UTF-8"
+    } catch {
+    }
+}
+
+GetMacroKey(macroPath) {
+    ; Extract just the folder name, not the full path
+    try {
+        SplitPath macroPath, , &macroDir
+        SplitPath macroDir, &folderName, &parentDir
+        
+        ; Get category name too
+        SplitPath parentDir, &categoryName
+        
+        ; Create clean key: Category_MacroName
+        key := categoryName "_" folderName
+        
+        ; Replace invalid characters
+        key := StrReplace(key, " ", "_")
+        key := StrReplace(key, "\", "_")
+        key := StrReplace(key, ":", "")
+        key := StrReplace(key, "/", "_")
+        key := RegExReplace(key, "[^a-zA-Z0-9_-]", "")
+        
+        return key
+    } catch {
+        ; Fallback to simple replacement
+        key := StrReplace(StrReplace(macroPath, "\", "_"), ":", "")
+        return RegExReplace(key, "[^a-zA-Z0-9_-]", "")
+    }
+}
+
 IncrementRunCount(macroPath) {
     global macroStats
     
@@ -281,6 +443,27 @@ GetRunCount(macroPath) {
     return 0
 }
 
+ToggleFavorite(macroPath) {
+    global favorites
+    key := GetMacroKey(macroPath)
+    
+    if favorites.Has(key)
+        favorites.Delete(key)
+    else
+        favorites[key] := {
+            path: macroPath,
+            addedAt: A_Now
+        }
+    
+    SaveFavorites()
+}
+
+IsFavorite(macroPath) {
+    global favorites
+    key := GetMacroKey(macroPath)
+    return favorites.Has(key)
+}
+
 StatsToJSON(statsMap) {
     if statsMap.Count = 0
         return "{}"
@@ -293,6 +476,22 @@ StatsToJSON(statsMap) {
         firstRun := EscapeJSON(data.firstRun)
         
         pairs.Push('"' keyStr '":{"runCount":' runCount ',"lastRun":"' lastRun '","firstRun":"' firstRun '"}')
+    }
+    
+    return "{" StrJoin(pairs, ",") "}"
+}
+
+FavoritesToJSON(favMap) {
+    if favMap.Count = 0
+        return "{}"
+    
+    pairs := []
+    for key, data in favMap {
+        keyStr := EscapeJSON(key)
+        path := EscapeJSON(data.path)
+        addedAt := EscapeJSON(data.addedAt)
+        
+        pairs.Push('"' keyStr '":{"path":"' path '","addedAt":"' addedAt '"}')
     }
     
     return "{" StrJoin(pairs, ",") "}"
@@ -343,6 +542,103 @@ ParseStatsJSON(json) {
     return result
 }
 
+ParseFavoritesJSON(json) {
+    result := Map()
+    
+    if !json || json = "{}"
+        return result
+    
+    try {
+        content := Trim(SubStr(json, 2, StrLen(json) - 2))
+        entries := SplitTopLevel(content)
+        
+        for entry in entries {
+            if !InStr(entry, ":")
+                continue
+            
+            if !RegExMatch(entry, '"([^"]+)":\s*{', &m)
+                continue
+            
+            key := m[1]
+            
+            path := ""
+            addedAt := ""
+            
+            if RegExMatch(entry, '"path"\s*:\s*"([^"]+)"', &m2)
+                path := UnescapeJSON(m2[1])
+            
+            if RegExMatch(entry, '"addedAt"\s*:\s*"([^"]+)"', &m3)
+                addedAt := m3[1]
+            
+            if path != ""
+                result[key] := {
+                    path: path,
+                    addedAt: addedAt
+                }
+        }
+    } catch {
+        return Map()
+    }
+    
+    return result
+}
+
+SplitTopLevel(str) {
+    result := []
+    depth := 0
+    current := ""
+    
+    Loop Parse, str {
+        char := A_LoopField
+        
+        if (char = "{")
+            depth++
+        else if (char = "}")
+            depth--
+        
+        if (char = "," && depth = 0) {
+            if (Trim(current) != "")
+                result.Push(Trim(current))
+            current := ""
+        } else {
+            current .= char
+        }
+    }
+    
+    if (Trim(current) != "")
+        result.Push(Trim(current))
+    
+    return result
+}
+
+EscapeJSON(str) {
+    str := StrReplace(str, "\", "\\")
+    str := StrReplace(str, '"', '\"')
+    str := StrReplace(str, "`n", "\n")
+    str := StrReplace(str, "`r", "\r")
+    str := StrReplace(str, "`t", "\t")
+    return str
+}
+
+UnescapeJSON(str) {
+    str := StrReplace(str, "\\", "\")
+    str := StrReplace(str, '\"', '"')
+    str := StrReplace(str, "\n", "`n")
+    str := StrReplace(str, "\r", "`r")
+    str := StrReplace(str, "\t", "`t")
+    return str
+}
+
+StrJoin(arr, delim) {
+    result := ""
+    for item in arr {
+        if (result != "")
+            result .= delim
+        result .= item
+    }
+    return result
+}
+
 ; ========== UPDATE FUNCTIONS ==========
 
 CheckForUpdatesPrompt() {
@@ -383,7 +679,7 @@ CheckForUpdatesPrompt() {
         . "Latest: " manifest.version "`n`n"
         . "What's new:`n" changelogText "`n"
         . "Do you want to update now?",
-        "V1LN Clan Update",
+        "AHK vault Update",
         "YesNo Iconi"
     )
     if (choice = "No")
@@ -509,7 +805,7 @@ CheckForUpdatesPrompt() {
     updateMsg := "Update complete!`n`nVersion " manifest.version " installed.`n`n"
     if iconsUpdated
     updateMsg .= "`nChanges:`n" changelogText
-
+    SendUpdateNotification(current, manifest.version)
     MsgBox updateMsg, "Update Finished", "Iconi"
 }
 
@@ -754,12 +1050,835 @@ ManualUpdate(*) {
     updateMsg := "Update complete!`n`nVersion " manifest.version " installed.`n`n"
     if iconsUpdated
     updateMsg .= "`nChanges:`n" changelogText "`n`nRestart the launcher to see changes."
-    
+    SendUpdateNotification("manual", manifest.version)
     MsgBox(updateMsg, "Update Finished", "Iconi")
     
     try {
         mainGui.Destroy()
         CreateMainGui()
+    }
+}
+
+; ========== ADD THESE FUNCTIONS TO MacroLauncher.ahk ==========
+
+; ========== PROFILE DROPDOWN UI ==========
+
+CreateMainGuiWithProfile() {
+    global mainGui, COLORS, BASE_DIR, ICON_DIR, USER_PROFILE
+    
+    mainGui := Gui("-Resize +Border", " AHK Vault")
+    mainGui.BackColor := COLORS.bg
+    mainGui.SetFont("s10", "Segoe UI")
+    
+    ; Header
+    mainGui.Add("Text", "x0 y0 w550 h80 Background" COLORS.accent)
+    
+    ; Profile Picture Circle (Top Right)
+    profilePicBtn := mainGui.Add("Button", "x480 y10 w60 h60 Background" COLORS.card, "")
+    profilePicBtn.SetFont("s24")
+    
+    ; Show profile picture or initial
+    if USER_PROFILE.Has("profile_picture") && USER_PROFILE["profile_picture"] != "" {
+        try {
+            ; If we have base64 image, decode and display
+            ; For now, show username initial
+            initial := SubStr(USER_PROFILE.Has("username") ? USER_PROFILE["username"] : "U", 1, 1)
+            profilePicBtn.Text := initial
+        } catch {
+            initial := SubStr(USER_PROFILE.Has("username") ? USER_PROFILE["username"] : "U", 1, 1)
+            profilePicBtn.Text := initial
+        }
+    } else {
+        initial := SubStr(USER_PROFILE.Has("username") ? USER_PROFILE["username"] : "U", 1, 1)
+        profilePicBtn.Text := initial
+    }
+    
+    profilePicBtn.OnEvent("Click", (*) => ShowProfileDropdown())
+    
+    ; Rest of GUI creation...
+    titleText := mainGui.Add("Text", "x20 y17 w280 h100 c" COLORS.text " BackgroundTrans", " AHK Vault")
+    titleText.SetFont("s24 bold")
+    
+    ; Continue with rest of GUI...
+}
+
+ShowProfileDropdown() {
+    global COLORS, USER_PROFILE
+    
+    dropdownGui := Gui("+AlwaysOnTop -Caption +Border", "Profile Menu")
+    dropdownGui.BackColor := COLORS.card
+    dropdownGui.SetFont("s10 c" COLORS.text, "Segoe UI")
+    
+    ; Username display
+    username := USER_PROFILE.Has("username") ? USER_PROFILE["username"] : "User"
+    usernameText := dropdownGui.Add("Text", "x20 y15 w260 c" COLORS.text, username)
+    usernameText.SetFont("s12 bold")
+    
+    ; Total macros run
+    totalMacros := USER_PROFILE.Has("total_macros") ? USER_PROFILE["total_macros"] : "0"
+    statsText := dropdownGui.Add("Text", "x20 y40 w260 c" COLORS.textDim, "Macros run: " totalMacros)
+    statsText.SetFont("s9")
+    
+    dropdownGui.Add("Text", "x0 y65 w300 h1 Background" COLORS.border)
+    
+    ; Settings button
+    settingsBtn := dropdownGui.Add("Button", "x10 y75 w280 h35 Background" COLORS.cardHover, "⚙️ Settings")
+    settingsBtn.SetFont("s10")
+    settingsBtn.OnEvent("Click", (*) => (dropdownGui.Destroy(), ShowSettingsGui()))
+    
+    ; View Profile button
+    profileBtn := dropdownGui.Add("Button", "x10 y115 w280 h35 Background" COLORS.cardHover, "👤 View Profile")
+    profileBtn.SetFont("s10")
+    profileBtn.OnEvent("Click", (*) => (dropdownGui.Destroy(), ShowFullProfile()))
+    
+    ; Logout button
+    logoutBtn := dropdownGui.Add("Button", "x10 y155 w280 h35 Background" COLORS.danger, "🚪 Logout")
+    logoutBtn.SetFont("s10")
+    logoutBtn.OnEvent("Click", (*) => (dropdownGui.Destroy(), LogoutUser()))
+    
+    dropdownGui.OnEvent("Escape", (*) => dropdownGui.Destroy())
+    
+    ; Position near profile button (top right)
+    dropdownGui.Show("x" (A_ScreenWidth - 320) " y80 w300 h200")
+}
+
+ShowSettingsGui() {
+    global COLORS, SESSION_TOKEN_FILE, WORKER_URL
+    
+    settingsGui := Gui("+Resize", "Settings")
+    settingsGui.BackColor := COLORS.bg
+    settingsGui.SetFont("s10 c" COLORS.text, "Segoe UI")
+    
+    ; Header
+    settingsGui.Add("Text", "x0 y0 w600 h70 Background" COLORS.accent)
+    settingsGui.Add("Text", "x20 y20 w560 h30 c" COLORS.text " BackgroundTrans", "⚙️ Settings").SetFont("s16 bold")
+    
+    ; Tab control for settings categories
+    tab := settingsGui.Add("Tab3", "x10 y80 w580 h500 Background" COLORS.bgLight,
+        ["Account", "Privacy", "Notifications", "Appearance"])
+    
+    ; ===== ACCOUNT TAB =====
+    tab.UseTab(1)
+    
+    settingsGui.Add("Text", "x30 y120 w540 c" COLORS.text, "Change Password").SetFont("s12 bold")
+    settingsGui.Add("Text", "x30 y145 w540 h1 Background" COLORS.border)
+    
+    settingsGui.Add("Text", "x30 y160 w200 c" COLORS.text, "Current Password:")
+    oldPassEdit := settingsGui.Add("Edit", "x30 y185 w540 h30 Password Background" COLORS.card " c" COLORS.text)
+    
+    settingsGui.Add("Text", "x30 y225 w200 c" COLORS.text, "New Password:")
+    newPassEdit := settingsGui.Add("Edit", "x30 y250 w540 h30 Password Background" COLORS.card " c" COLORS.text)
+    
+    settingsGui.Add("Text", "x30 y290 w200 c" COLORS.text, "Confirm New Password:")
+    confirmPassEdit := settingsGui.Add("Edit", "x30 y315 w540 h30 Password Background" COLORS.card " c" COLORS.text)
+    
+    changePassBtn := settingsGui.Add("Button", "x30 y360 w200 h40 Background" COLORS.success, "Change Password")
+    changePassBtn.SetFont("s10 bold")
+    changePassBtn.OnEvent("Click", (*) => ChangePassword(oldPassEdit, newPassEdit, confirmPassEdit))
+    
+    ; ===== PRIVACY TAB =====
+    tab.UseTab(2)
+    
+    settingsGui.Add("Text", "x30 y120 w540 c" COLORS.text, "Privacy Settings").SetFont("s12 bold")
+    settingsGui.Add("Text", "x30 y145 w540 h1 Background" COLORS.border)
+    
+    profileVisibleCheck := settingsGui.Add("Checkbox", "x30 y165 w540 c" COLORS.text, "Show profile in reviews")
+    profileVisibleCheck.Value := 1
+    
+    showStatsCheck := settingsGui.Add("Checkbox", "x30 y200 w540 c" COLORS.text, "Show statistics publicly")
+    showStatsCheck.Value := 1
+    
+    ; ===== NOTIFICATIONS TAB =====
+    tab.UseTab(3)
+    
+    settingsGui.Add("Text", "x30 y120 w540 c" COLORS.text, "Notification Preferences").SetFont("s12 bold")
+    settingsGui.Add("Text", "x30 y145 w540 h1 Background" COLORS.border)
+    
+    updateNotifCheck := settingsGui.Add("Checkbox", "x30 y165 w540 c" COLORS.text, "Notify about macro updates")
+    updateNotifCheck.Value := 1
+    
+    reviewNotifCheck := settingsGui.Add("Checkbox", "x30 y200 w540 c" COLORS.text, "Notify about review replies")
+    reviewNotifCheck.Value := 1
+    
+    ; ===== APPEARANCE TAB =====
+    tab.UseTab(4)
+    
+    settingsGui.Add("Text", "x30 y120 w540 c" COLORS.text, "Appearance Settings").SetFont("s12 bold")
+    settingsGui.Add("Text", "x30 y145 w540 h1 Background" COLORS.border)
+    
+    settingsGui.Add("Text", "x30 y165 w200 c" COLORS.text, "Theme:")
+    themeDDL := settingsGui.Add("DropDownList", "x30 y190 w250 Background" COLORS.card " c" COLORS.text,
+        ["Dark (Default)", "Light", "System"])
+    themeDDL.Choose(1)
+    
+    settingsGui.Add("Text", "x30 y235 w200 c" COLORS.text, "Font Size:")
+    fontDDL := settingsGui.Add("DropDownList", "x30 y260 w250 Background" COLORS.card " c" COLORS.text,
+        ["Small", "Medium (Default)", "Large"])
+    fontDDL.Choose(2)
+    
+    ; Save and Close buttons
+    saveBtn := settingsGui.Add("Button", "x10 y590 w285 h40 Background" COLORS.success, "💾 Save Settings")
+    saveBtn.SetFont("s11 bold")
+    saveBtn.OnEvent("Click", (*) => SaveSettings(settingsGui))
+    
+    closeBtn := settingsGui.Add("Button", "x305 y590 w285 h40 Background" COLORS.danger, "❌ Close")
+    closeBtn.SetFont("s11 bold")
+    closeBtn.OnEvent("Click", (*) => settingsGui.Destroy())
+    
+    settingsGui.Show("w600 h640 Center")
+}
+
+ChangePassword(oldPassEdit, newPassEdit, confirmPassEdit) {
+    global WORKER_URL, SESSION_TOKEN_FILE, COLORS
+    
+    oldPass := oldPassEdit.Value
+    newPass := newPassEdit.Value
+    confirmPass := confirmPassEdit.Value
+    
+    if (oldPass = "" || newPass = "" || confirmPass = "") {
+        MsgBox "Please fill in all password fields!", "Error", "Icon!"
+        return
+    }
+    
+    if (newPass != confirmPass) {
+        MsgBox "New passwords do not match!", "Error", "Icon!"
+        return
+    }
+    
+    if (StrLen(newPass) < 6) {
+        MsgBox "Password must be at least 6 characters!", "Error", "Icon!"
+        return
+    }
+    
+    if !FileExist(SESSION_TOKEN_FILE) {
+        MsgBox "Not logged in!", "Error", "Icon!"
+        return
+    }
+    
+    try {
+        sessionToken := Trim(FileRead(SESSION_TOKEN_FILE))
+        
+        oldPassHash := HashPassword(oldPass)
+        newPassHash := HashPassword(newPass)
+        
+        body := '{"session_token":"' JsonEscape(sessionToken) '",'
+              . '"old_password_hash":"' oldPassHash '",'
+              . '"new_password_hash":"' newPassHash '"}'
+        
+        ToolTip "Changing password..."
+        
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(10000, 10000, 10000, 10000)
+        req.Open("POST", WORKER_URL "/auth/change-password", false)
+        req.SetRequestHeader("Content-Type", "application/json")
+        req.Send(body)
+        
+        ToolTip
+        
+        if (req.Status = 200) {
+            MsgBox "✅ Password changed successfully!", "Success", "Iconi T2"
+            oldPassEdit.Value := ""
+            newPassEdit.Value := ""
+            confirmPassEdit.Value := ""
+        } else {
+            resp := req.ResponseText
+            MsgBox "❌ Failed to change password: " resp, "Error", "Icon!"
+        }
+        
+    } catch as err {
+        ToolTip
+        MsgBox "Error changing password: " err.Message, "Error", "Icon!"
+    }
+}
+
+SaveSettings(gui) {
+    ; TODO: Implement settings save to server
+    MsgBox "✅ Settings saved!", "Success", "Iconi T2"
+}
+
+ShowFullProfile() {
+    global COLORS, USER_PROFILE, SESSION_TOKEN_FILE, WORKER_URL
+    
+    profileGui := Gui("+Resize", "My Profile")
+    profileGui.BackColor := COLORS.bg
+    profileGui.SetFont("s10 c" COLORS.text, "Segoe UI")
+    
+    ; Header
+    profileGui.Add("Text", "x0 y0 w700 h120 Background" COLORS.accent)
+    
+    ; Profile picture circle
+    profilePic := profileGui.Add("Text", "x30 y20 w80 h80 Background" COLORS.success " Center", 
+        SubStr(USER_PROFILE.Has("username") ? USER_PROFILE["username"] : "U", 1, 1))
+    profilePic.SetFont("s32 bold c" COLORS.text)
+    
+    ; Username
+    username := USER_PROFILE.Has("username") ? USER_PROFILE["username"] : "User"
+    profileGui.Add("Text", "x130 y35 w550 c" COLORS.text " BackgroundTrans", username).SetFont("s18 bold")
+    
+    ; Member since
+    created := USER_PROFILE.Has("created") ? USER_PROFILE["created"] : 0
+    memberSince := FormatTimestampUtil(created)
+    profileGui.Add("Text", "x130 y70 w550 c" COLORS.textDim " BackgroundTrans", "Member since: " memberSince)
+    
+    ; Stats cards
+    yPos := 140
+    
+    ; Load full stats
+    try {
+        stats := GetUserStatsFromServer()
+        
+        CreateStatCard(profileGui, 30, yPos, "📊 Macros Run", String(stats.total_macros_run))
+        CreateStatCard(profileGui, 240, yPos, "👍 Likes Given", String(stats.likes_given))
+        CreateStatCard(profileGui, 450, yPos, "👎 Dislikes Given", String(stats.dislikes_given))
+        
+        yPos += 100
+        
+        CreateStatCard(profileGui, 30, yPos, "💬 Reviews", String(stats.ratings_given))
+        CreateStatCard(profileGui, 240, yPos, "⭐ Favorites", String(stats.favorites_count))
+        CreateStatCard(profileGui, 450, yPos, "📝 Comments", String(stats.reviews_with_comments))
+        
+        yPos += 100  ; Add height increment after the stat cards
+        
+    } catch {
+        profileGui.Add("Text", "x30 y" yPos " w640 h500 c" COLORS.textDim, "Failed to load statistics")
+        yPos += 30  ; Add height for error message
+    }
+    
+    ; Edit Profile button
+    editBtn := profileGui.Add("Button", "x30 y" yPos " w200 h40 Background" COLORS.accentAlt, "✏️ Edit Profile")
+    editBtn.SetFont("s10 bold")
+    editBtn.OnEvent("Click", (*) => ShowProfileEditor())
+    
+    ; Close button
+    closeBtn := profileGui.Add("Button", "x470 y" yPos " w200 h40 Background" COLORS.danger, "Close")
+    closeBtn.SetFont("s10 bold")
+    closeBtn.OnEvent("Click", (*) => profileGui.Destroy())
+    
+    profileGui.Show("w700 h" (yPos + 60) " Center")
+}
+
+CreateStatCard(gui, x, y, label, value) {
+    global COLORS
+    
+    gui.Add("Text", "x" x " y" y " w190 h80 Background" COLORS.card)
+    gui.Add("Text", "x" (x + 10) " y" (y + 10) " w170 c" COLORS.textDim " BackgroundTrans", label).SetFont("s9")
+    gui.Add("Text", "x" (x + 10) " y" (y + 35) " w170 c" COLORS.text " BackgroundTrans", value).SetFont("s20 bold")
+}
+
+GetUserStatsFromServer() {
+    global WORKER_URL, SESSION_TOKEN_FILE
+    
+    if !FileExist(SESSION_TOKEN_FILE)
+        return {}
+    
+    try {
+        sessionToken := Trim(FileRead(SESSION_TOKEN_FILE))
+        
+        body := '{"session_token":"' JsonEscape(sessionToken) '"}'
+        
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(10000, 10000, 10000, 10000)
+        req.Open("POST", WORKER_URL "/profile/stats", false)
+        req.SetRequestHeader("Content-Type", "application/json")
+        req.Send(body)
+        
+        if (req.Status = 200) {
+            resp := req.ResponseText
+            
+            stats := {}
+            if RegExMatch(resp, '"total_macros_run"\s*:\s*(\d+)', &m)
+                stats.total_macros_run := m[1]
+            if RegExMatch(resp, '"ratings_given"\s*:\s*(\d+)', &m)
+                stats.ratings_given := m[1]
+            if RegExMatch(resp, '"likes_given"\s*:\s*(\d+)', &m)
+                stats.likes_given := m[1]
+            if RegExMatch(resp, '"dislikes_given"\s*:\s*(\d+)', &m)
+                stats.dislikes_given := m[1]
+            if RegExMatch(resp, '"favorites_count"\s*:\s*(\d+)', &m)
+                stats.favorites_count := m[1]
+            if RegExMatch(resp, '"reviews_with_comments"\s*:\s*(\d+)', &m)
+                stats.reviews_with_comments := m[1]
+            
+            return stats
+        }
+    } catch {
+    }
+    
+    return { total_macros_run: 0, ratings_given: 0, likes_given: 0, dislikes_given: 0, favorites_count: 0, reviews_with_comments: 0 }
+}
+
+LogoutUser() {
+    global SESSION_TOKEN_FILE
+    
+    choice := MsgBox("Are you sure you want to logout?", "Logout", "YesNo Iconi")
+    
+    if (choice = "No")
+        return
+    
+    try {
+        if FileExist(SESSION_TOKEN_FILE)
+            FileDelete SESSION_TOKEN_FILE
+    } catch {
+    }
+    
+    MsgBox "✅ Logged out successfully!`n`nThe launcher will now close.", "Logout", "Iconi T2"
+    ExitApp
+}
+
+HashPassword(password) {
+    salt := "V1LN_CLAN_2026_SECURE"
+    combined := salt . password . salt
+    
+    hash := 0
+    Loop Parse combined
+        hash := Mod(hash * 31 + Ord(A_LoopField), 2147483647)
+    
+    Loop 10000 {
+        hash := Mod(hash * 37 + Ord(SubStr(password, Mod(A_Index, StrLen(password)) + 1, 1)), 2147483647)
+    }
+    
+    return hash
+}
+
+GetMacroRatings(macroPath) {
+    global WORKER_URL, RATINGS_CACHE
+    
+    macroId := GetMacroKey(macroPath)
+    
+    ; Check cache first (30 second TTL for faster updates)
+    if RATINGS_CACHE.Has(macroId) {
+        cached := RATINGS_CACHE[macroId]
+        if (A_TickCount - cached.time < 30000) { ; 30 seconds
+            return cached.data
+        }
+    }
+    
+    try {
+        url := WORKER_URL "/ratings/" macroId
+        
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(10000, 10000, 10000, 10000)
+        req.Open("GET", url, false)
+        req.Send()
+        
+        if (req.Status = 200) {
+            resp := req.ResponseText
+            
+            ; Parse the response
+            ratings := ParseRatingsResponse(resp)
+            
+            ; Cache it
+            RATINGS_CACHE[macroId] := {
+                data: ratings,
+                time: A_TickCount
+            }
+            
+            return ratings
+        }
+    } catch as err {
+        ; Silent fail - return empty ratings on error
+    }
+    
+    ; Return empty ratings if request failed
+    return { likes: 0, dislikes: 0, total: 0, ratio: 0, reviews: [] }
+}
+
+ParseRatingsResponse(json) {
+    result := { likes: 0, dislikes: 0, total: 0, ratio: 0, reviews: [] }
+    
+    try {
+        ; First check if there's a stats object
+        if RegExMatch(json, '(?s)"stats"\s*:\s*\{([^}]+)\}', &statsMatch) {
+            statsBlock := statsMatch[1]
+            
+            if RegExMatch(statsBlock, '"likes"\s*:\s*(\d+)', &m)
+                result.likes := Integer(m[1])
+            
+            if RegExMatch(statsBlock, '"dislikes"\s*:\s*(\d+)', &m)
+                result.dislikes := Integer(m[1])
+            
+            if RegExMatch(statsBlock, '"total"\s*:\s*(\d+)', &m)
+                result.total := Integer(m[1])
+            
+            if RegExMatch(statsBlock, '"ratio"\s*:\s*(\d+)', &m)
+                result.ratio := Integer(m[1])
+        }
+        
+        ; If no stats object, calculate from ratings array
+        if (result.total = 0) {
+            if RegExMatch(json, '"likes"\s*:\s*(\d+)', &m)
+                result.likes := Integer(m[1])
+            
+            if RegExMatch(json, '"dislikes"\s*:\s*(\d+)', &m)
+                result.dislikes := Integer(m[1])
+            
+            if RegExMatch(json, '"total"\s*:\s*(\d+)', &m)
+                result.total := Integer(m[1])
+            
+            if RegExMatch(json, '"ratio"\s*:\s*(\d+)', &m)
+                result.ratio := Integer(m[1])
+        }
+        
+        ; Extract reviews array
+        if RegExMatch(json, '(?s)"ratings"\s*:\s*\[(.*?)\]', &m) {
+            reviewsBlock := m[1]
+            pos := 1
+            
+            while (p := RegExMatch(reviewsBlock, '(?s)\{.*?\}', &mm, pos)) {
+                reviewJson := mm[0]
+                pos := p + StrLen(reviewJson)
+                
+                review := {}
+                
+                if RegExMatch(reviewJson, '"username"\s*:\s*"([^"]+)"', &u)
+                    review.username := u[1]
+                
+                if RegExMatch(reviewJson, '"vote"\s*:\s*"([^"]+)"', &v)
+                    review.vote := v[1]
+                
+                if RegExMatch(reviewJson, '"comment"\s*:\s*"([^"]*)"', &c) {
+                    comment := c[1]
+                    comment := StrReplace(comment, '\n', "`n")
+                    comment := StrReplace(comment, '\"', '"')
+                    review.comment := comment
+                }
+                
+                if RegExMatch(reviewJson, '"timestamp"\s*:\s*(\d+)', &t)
+                    review.timestamp := Integer(t[1])
+                
+                if RegExMatch(reviewJson, '"discord_id"\s*:\s*"([^"]+)"', &d)
+                    review.discord_id := d[1]
+                
+                result.reviews.Push(review)
+            }
+        }
+    } catch as err {
+        ; Return empty stats on error
+    }
+    
+    return result
+}
+
+FormatLikeRatio(likes, dislikes) {
+    total := likes + dislikes
+    if (total = 0)
+        return "No votes yet"
+    
+    return "👍 " likes " | 👎 " dislikes " (" Round((likes / total) * 100) "% positive)"
+}
+
+ShowRatingsDialog(macroPath, macroInfo) {
+    global COLORS, SESSION_TOKEN_FILE
+    
+    macroId := GetMacroKey(macroPath)
+    ratings := GetMacroRatings(macroPath)
+    
+    ratingsGui := Gui("+Resize", macroInfo.Title " - Reviews")
+    ratingsGui.BackColor := COLORS.bg
+    ratingsGui.SetFont("s10 c" COLORS.text, "Segoe UI")
+    
+    ; Header with scrollable content
+    ratingsGui.Add("Text", "x0 y0 w700 h140 Background" COLORS.card)
+    
+    ; Like/Dislike stats
+    ratingsGui.Add("Text", "x20 y20 w200 h80 Background" COLORS.success)
+    likeIcon := ratingsGui.Add("Text", "x20 y25 w200 h40 Center c" COLORS.text " BackgroundTrans", "👍")
+    likeIcon.SetFont("s28 bold")
+    likeCount := ratingsGui.Add("Text", "x20 y70 w200 h30 Center c" COLORS.text " BackgroundTrans", ratings.likes " Likes")
+    likeCount.SetFont("s16 bold")
+    
+    ratingsGui.Add("Text", "x240 y20 w200 h80 Background" COLORS.danger)
+    dislikeIcon := ratingsGui.Add("Text", "x240 y25 w200 h40 Center c" COLORS.text " BackgroundTrans", "👎")
+    dislikeIcon.SetFont("s28 bold")
+    dislikeCount := ratingsGui.Add("Text", "x240 y70 w200 h30 Center c" COLORS.text " BackgroundTrans", ratings.dislikes " Dislikes")
+    dislikeCount.SetFont("s16 bold")
+    
+    ; Ratio
+    if (ratings.total > 0) {
+        ratioText := ratingsGui.Add("Text", "x20 y110 w420 Center c" COLORS.text " BackgroundTrans",
+            ratings.ratio "% positive • " ratings.total " total votes")
+        ratioText.SetFont("s11 bold")
+    } else {
+        ratioText := ratingsGui.Add("Text", "x20 y110 w420 Center c" COLORS.textDim " BackgroundTrans",
+            "No votes yet - be the first!")
+        ratioText.SetFont("s11")
+    }
+    
+    ; Vote buttons
+    likeBtn := ratingsGui.Add("Button", "x480 y30 w100 h45 Background" COLORS.success, "👍 Like")
+    likeBtn.SetFont("s11 bold")
+    likeBtn.OnEvent("Click", (*) => SubmitVote(macroId, "like", ratingsGui))
+    
+    dislikeBtn := ratingsGui.Add("Button", "x590 y30 w100 h45 Background" COLORS.danger, "👎 Dislike")
+    dislikeBtn.SetFont("s11 bold")
+    dislikeBtn.OnEvent("Click", (*) => SubmitVote(macroId, "dislike", ratingsGui))
+    
+    ; Reviews section title
+    ratingsGui.Add("Text", "x20 y150 w660 c" COLORS.text, "Recent Reviews").SetFont("s12 bold")
+    
+    ; ========== SCROLLABLE REVIEWS SECTION ==========
+    ; Create a ListView for scrollable reviews
+    reviewsLV := ratingsGui.Add("ListView", "x20 y180 w660 h350 -Hdr Background" COLORS.card " c" COLORS.text, ["Review"])
+    reviewsLV.ModifyCol(1, 640)
+    
+    if (ratings.reviews.Length = 0) {
+        reviewsLV.Add(, "No reviews yet. Be the first to leave feedback!")
+    } else {
+        maxReviews := Min(50, ratings.reviews.Length)  ; Show up to 50 reviews
+        
+        Loop maxReviews {
+            review := ratings.reviews[A_Index]
+            
+            ; Build review text
+            voteIcon := review.vote = "like" ? "👍" : "👎"
+            username := review.username ? review.username : "Anonymous"
+            dateStr := FormatTimestamp(review.timestamp)
+            
+            reviewText := voteIcon " " username " • " dateStr
+            
+            if (review.comment && review.comment != "") {
+                reviewText .= "`n" review.comment
+            }
+            
+            reviewsLV.Add(, reviewText)
+        }
+        
+        if (ratings.reviews.Length > 50) {
+            reviewsLV.Add(, "`n--- Showing 50 of " ratings.reviews.Length " reviews ---")
+        }
+    }
+    
+    ; Close button
+    closeBtn := ratingsGui.Add("Button", "x275 y545 w150 h40 Background" COLORS.danger, "Close")
+    closeBtn.SetFont("s10 bold")
+    closeBtn.OnEvent("Click", (*) => ratingsGui.Destroy())
+    
+    ratingsGui.OnEvent("Close", (*) => ratingsGui.Destroy())
+    ratingsGui.Show("w700 h600 Center")
+}
+
+ShowUserProfilePopup(discord_id) {
+    global COLORS, WORKER_URL
+    
+    if (!discord_id || discord_id = "") {
+        return  ; Silent fail - don't show error
+    }
+    
+    try {
+        ToolTip "Loading profile..."
+        
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(5000, 5000, 5000, 5000)
+        req.Open("GET", WORKER_URL "/profile/public/" discord_id, false)
+        req.Send()
+        
+        ToolTip
+        
+        if (req.Status != 200) {
+            ; Silent fail - profile might not exist yet
+            return
+        }
+        
+        resp := req.ResponseText
+        
+        ; Parse profile data
+        username := JsonExtractAny(resp, "username")
+        bio := JsonExtractAny(resp, "bio")
+        totalMacros := JsonExtractAny(resp, "total_macros_run")
+        memberSince := JsonExtractAny(resp, "member_since")
+        
+        ; If no username found, don't show popup
+        if (!username || username = "") {
+            return
+        }
+        
+        ; Create profile popup
+        profileGui := Gui("+AlwaysOnTop", username "'s Profile")
+        profileGui.BackColor := COLORS.bg
+        profileGui.SetFont("s10 c" COLORS.text, "Segoe UI")
+        
+        ; Header
+        profileGui.Add("Text", "x0 y0 w400 h90 Background" COLORS.accent)
+        
+        ; Profile picture (use initial letter)
+        initial := SubStr(username, 1, 1)
+        profilePic := profileGui.Add("Text", "x20 y15 w60 h60 Background" COLORS.success " Center", initial)
+        profilePic.SetFont("s24 bold c" COLORS.text)
+        
+        ; Username
+        profileGui.Add("Text", "x95 y25 w285 c" COLORS.text " BackgroundTrans", username).SetFont("s14 bold")
+        
+        ; Member since
+        memberStr := memberSince ? FormatTimestampUtil(memberSince) : "Recently"
+        profileGui.Add("Text", "x95 y55 w285 c" COLORS.textDim " BackgroundTrans", "Member since: " memberStr).SetFont("s8")
+        
+        ; Bio section
+        profileGui.Add("Text", "x20 y100 w360 c" COLORS.text, "Bio:").SetFont("s10 bold")
+        
+        bioText := (bio && bio != "") ? bio : "No bio yet"
+        bioDisplay := profileGui.Add("Text", "x20 y125 w360 h80 Background" COLORS.card, " " bioText)
+        bioDisplay.SetFont("s9")
+        
+        ; Stats
+        profileGui.Add("Text", "x20 y220 w360 c" COLORS.text, "Statistics:").SetFont("s10 bold")
+        
+        profileGui.Add("Text", "x20 y245 w360 h60 Background" COLORS.card)
+        profileGui.Add("Text", "x30 y255 w340 c" COLORS.text " BackgroundTrans", "📊 Total Macros Run:").SetFont("s9")
+        
+        macroCount := totalMacros ? totalMacros : "0"
+        profileGui.Add("Text", "x30 y280 w340 c" COLORS.accent " BackgroundTrans", macroCount).SetFont("s14 bold")
+        
+        ; Close button
+        closeBtn := profileGui.Add("Button", "x125 y320 w150 h40 Background" COLORS.danger, "Close")
+        closeBtn.SetFont("s10 bold")
+        closeBtn.OnEvent("Click", (*) => profileGui.Destroy())
+        
+        profileGui.OnEvent("Close", (*) => profileGui.Destroy())
+        profileGui.Show("w400 h380 Center")
+        
+    } catch as err {
+        ToolTip
+        ; Silent fail - don't annoy users with error messages
+    }
+}
+
+SubmitVote(macroId, voteType, parentGui := 0) {
+    global COLORS
+    
+    ; Show comment dialog
+    commentGui := Gui("+AlwaysOnTop", "Add Comment (Optional)")
+    commentGui.BackColor := COLORS.bg
+    commentGui.SetFont("s10 c" COLORS.text, "Segoe UI")
+    
+    ; Header
+    commentGui.Add("Text", "x0 y0 w500 h60 Background" COLORS.accent)
+    voteEmoji := voteType = "like" ? "👍" : "👎"
+    commentGui.Add("Text", "x20 y15 w460 c" COLORS.text " BackgroundTrans", 
+        voteEmoji " " (voteType = "like" ? "Like" : "Dislike") " this macro").SetFont("s14 bold")
+    
+    ; Comment box
+    commentGui.Add("Text", "x20 y80 w460 c" COLORS.text, "Leave a comment (optional):")
+    commentEdit := commentGui.Add("Edit", "x20 y110 w460 h100 Background" COLORS.bgLight " c" COLORS.text " Multi")
+    
+    commentGui.Add("Text", "x20 y220 w460 c" COLORS.textDim, "Maximum 500 characters").SetFont("s8")
+    
+    ; Status text
+    statusText := commentGui.Add("Text", "x20 y245 w460 Center c" COLORS.danger, "")
+    
+    ; Buttons
+    submitBtn := commentGui.Add("Button", "x20 y275 w220 h40 Background" COLORS.success, "Submit Vote")
+    submitBtn.SetFont("s10 bold")
+    
+    skipBtn := commentGui.Add("Button", "x260 y275 w220 h40 Background" COLORS.warning, "Skip Comment")
+    skipBtn.SetFont("s10 bold")
+    
+    submitBtn.OnEvent("Click", (*) => SubmitVoteWithComment(
+        macroId, 
+        voteType, 
+        commentEdit.Value, 
+        statusText, 
+        commentGui, 
+        parentGui
+    ))
+    
+    skipBtn.OnEvent("Click", (*) => SubmitVoteWithComment(
+        macroId, 
+        voteType, 
+        "", 
+        statusText, 
+        commentGui, 
+        parentGui
+    ))
+    
+    commentGui.OnEvent("Close", (*) => commentGui.Destroy())
+    commentGui.Show("w500 h335 Center")
+}
+
+SubmitVoteWithComment(macroId, voteType, comment, statusControl, commentGui, parentGui) {
+    global WORKER_URL, SESSION_TOKEN_FILE, RATINGS_CACHE
+    
+    if !FileExist(SESSION_TOKEN_FILE) {
+        statusControl.Value := "❌ Not logged in - session file not found"
+        SoundBeep(500, 200)
+        return
+    }
+    
+    sessionToken := ""
+    try {
+        sessionToken := Trim(FileRead(SESSION_TOKEN_FILE))
+    } catch {
+        statusControl.Value := "❌ Cannot read session file"
+        SoundBeep(500, 200)
+        return
+    }
+    
+    if (sessionToken = "") {
+        statusControl.Value := "❌ Session token is empty - please re-login"
+        SoundBeep(500, 200)
+        return
+    }
+    
+    statusControl.Value := "Submitting..."
+    
+    try {
+        body := '{"session_token":"' JsonEscape(sessionToken) '","macro_id":"' JsonEscape(macroId) '","vote":"' voteType '","comment":"' JsonEscape(comment) '"}'
+        
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(15000, 15000, 15000, 15000)
+        req.Open("POST", WORKER_URL "/ratings/submit", false)
+        req.SetRequestHeader("Content-Type", "application/json")
+        req.Send(body)
+        
+        if (req.Status = 200) {
+            ; Clear cache for this macro
+            if RATINGS_CACHE.Has(macroId)
+                RATINGS_CACHE.Delete(macroId)
+            
+            statusControl.Value := "✅ Vote submitted!"
+            SoundBeep(1000, 100)
+            
+            SetTimer(() => (
+                commentGui.Destroy(),
+                parentGui ? parentGui.Destroy() : 0
+            ), -1500)
+        } else if (req.Status = 401) {
+            statusControl.Value := "❌ Session expired - please re-login"
+            SoundBeep(500, 200)
+        } else {
+            resp := ""
+            try resp := req.ResponseText
+            statusControl.Value := "❌ Failed: " req.Status
+            SoundBeep(500, 200)
+        }
+    } catch as err {
+        statusControl.Value := "❌ Error: " err.Message
+        SoundBeep(500, 200)
+    }
+}
+
+FormatTimestamp(timestamp) {
+    ; Convert timestamp to readable date
+    try {
+        ; timestamp is milliseconds since epoch
+        seconds := timestamp / 1000
+        
+        ; Get current time in seconds
+        nowSeconds := DateDiff(A_Now, "19700101000000", "Seconds")
+        
+        diff := nowSeconds - seconds
+        
+        if (diff < 60)
+            return "Just now"
+        else if (diff < 3600)
+            return Floor(diff / 60) " minutes ago"
+        else if (diff < 86400)
+            return Floor(diff / 3600) " hours ago"
+        else if (diff < 604800)
+            return Floor(diff / 86400) " days ago"
+        else
+            return Floor(diff / 604800) " weeks ago"
+    } catch {
+        return "Recently"
     }
 }
 
@@ -865,13 +1984,14 @@ ParseManifest(json) {
 ; ========== MAIN GUI ==========
 
 CreateMainGui() {
-    global mainGui, COLORS, BASE_DIR, ICON_DIR
+    global mainGui, COLORS, BASE_DIR, ICON_DIR, USER_PROFILE, SECURE_VAULT
     
-    mainGui := Gui("-Resize +Border", " V1LN Clan")
+    mainGui := Gui("-Resize +Border", " AHK Vault")
     mainGui.BackColor := COLORS.bg
     mainGui.SetFont("s10", "Segoe UI")
     
-    iconPath := ICON_DIR "\V1.png"
+    ; Set window icon
+    iconPath := ICON_DIR "\TrayIcon.png"
     if FileExist(iconPath) {
         try {
             mainGui.Show("Hide")
@@ -879,41 +1999,81 @@ CreateMainGui() {
         }
     }
     
+    ; Header
     mainGui.Add("Text", "x0 y0 w550 h80 Background" COLORS.accent)
     
-    launcherImage := ICON_DIR "\V1.png"
+    ; Launcher logo
+    launcherImage := ICON_DIR "\Launcher.png"
     if FileExist(launcherImage) {
         try {
             mainGui.Add("Picture", "x5 y0 w75 h75 BackgroundTrans", launcherImage)
         }
     }
     
-    titleText := mainGui.Add("Text", "x85 y17 w280 h100 c" COLORS.text " BackgroundTrans", " V1LN Clan")
+    titleText := mainGui.Add("Text", "x85 y17 w180 h100 c" COLORS.text " BackgroundTrans", " AHK Vault")
     titleText.SetFont("s24 bold")
 
-    btnNuke := mainGui.Add("Button", "x290 y25 w75 h35 Background" COLORS.danger, "Uninstall")
+    ; Header buttons - Left side (Uninstall, Update, Changelog)
+    btnNuke := mainGui.Add("Button", "x270 y10 w75 h28 Background" COLORS.danger, "Uninstall")
     btnNuke.SetFont("s9")
     btnNuke.OnEvent("Click", CompleteUninstall)
 
-    btnUpdate := mainGui.Add("Button", "x370 y25 w75 h35 Background" COLORS.accentHover, "Update")
-    btnUpdate.SetFont("s10")
+    btnUpdate := mainGui.Add("Button", "x270 y42 w75 h28 Background" COLORS.accentHover, "Update")
+    btnUpdate.SetFont("s9")
     btnUpdate.OnEvent("Click", ManualUpdate)
     
-    btnLog := mainGui.Add("Button", "x450 y25 w75 h35 Background" COLORS.accentAlt, "Changelog")
-    btnLog.SetFont("s10")
+    btnLog := mainGui.Add("Button", "x350 y10 w75 h28 Background" COLORS.accentAlt, "Changelog")
+    btnLog.SetFont("s9")
     btnLog.OnEvent("Click", ShowChangelog)
+    
+    ; Logout button
+    btnLogout := mainGui.Add("Button", "x350 y42 w75 h28 Background" COLORS.warning, "Log Out")
+    btnLogout.SetFont("s9")
+    btnLogout.OnEvent("Click", (*) => LogoutUser())
+    
+    ; Profile Picture Circle (Top Right)
+    profilePicPath := SECURE_VAULT "\profile_picture.png"
+    hasProfilePic := false
+    
+    ; Check if profile picture exists
+    if FileExist(profilePicPath) {
+        try {
+            ; Use Picture control for actual image
+            picCtrl := mainGui.Add("Picture", "x475 y10 w60 h60 BackgroundTrans Border", profilePicPath)
+            picCtrl.OnEvent("Click", (*) => ShowProfileDropdown())
+            hasProfilePic := true
+        } catch {
+            ; Fall back to button with initial
+        }
+    }
+    
+    ; If no picture, show button with initial letter
+    if (!hasProfilePic) {
+        username := ReadUsername()
+        initial := SubStr(username, 1, 1)
+        
+        profilePicBtn := mainGui.Add("Button", "x475 y10 w60 h60 Background" COLORS.card " Border", initial)
+        profilePicBtn.SetFont("s24 bold c" COLORS.text)
+        profilePicBtn.OnEvent("Click", (*) => ShowProfileDropdown())
+    }
 
-    mainGui.Add("Text", "x25 y100 w500 c" COLORS.text, "Games").SetFont("s12 bold")
-     mainGui.Add("Text", "x25 y100 w500 c" COLORS.text, "Utilities").SetFont("s12 bold")
+    ; NEW: Add menu bar for enhanced features
+    try {
+        menuBar := Menu()
+        menuBar.Add("👤 Edit Profile", (*) => ShowProfileEditor())
+        menuBar.Add("📊 My History", (*) => ShowUserHistory())
+        menuBar.Add("🏆 Popular Macros", (*) => ShowPopularMacros())
+        mainGui.MenuBar := menuBar
+    } catch {
+        ; Silent fail if menu creation fails
+    }
+
+    mainGui.Add("Text", "x25 y100 w500 c" COLORS.text, "Utilities").SetFont("s12 bold")
     mainGui.Add("Text", "x25 y125 w500 h1 Background" COLORS.border)
-    
-    categories := GetCategories()
+
     yPos := 145
-    xPos := 25
-    cardWidth := 500
-    cardHeight := 70
-    
-        utilButtons := GetUtilityButtons()
+
+    utilButtons := GetUtilityButtons()
 
     if (utilButtons.Length > 0) {
         rowsNeeded := Ceil(utilButtons.Length / 4)
@@ -926,11 +2086,22 @@ CreateMainGui() {
         noUtilText.SetFont("s9")
         yPos += 80
     }
+    
+    ; Games Section
+    mainGui.Add("Text", "x25 y" yPos " w500 c" COLORS.text, "Games").SetFont("s12 bold")
+    mainGui.Add("Text", "x25 y" (yPos + 25) " w500 h1 Background" COLORS.border)
+    
+    categories := GetCategories()
+    yPos += 45
+    xPos := 25
+    cardWidth := 500
+    cardHeight := 70
+    
     if (categories.Length = 0) {
-        noGameText := mainGui.Add("Text", "x25 y145 w500 h120 c" COLORS.textDim " Center", 
+        noGameText := mainGui.Add("Text", "x25 y" yPos " w500 h120 c" COLORS.textDim " Center", 
             "No game categories found`n`nPlace game folders in the secure vault")
         noGameText.SetFont("s10")
-        yPos := 275
+        yPos += 120
     } else {
         for category in categories {
             CreateCategoryCard(mainGui, category, xPos, yPos, cardWidth, cardHeight)
@@ -938,14 +2109,200 @@ CreateMainGui() {
         }
     }
     
-    bottomY := yPos + 15
-    mainGui.Add("Text", "x0 y" bottomY " w550 h1 Background" COLORS.border)
-    
-    linkY := bottomY + 15
- 
-    CreateLink(mainGui, "Discord", "https://discord.gg/v1ln", 25, linkY)
+    mainGui.Show("w550 h" (yPos + 20) " Center")
+}
 
-    mainGui.Show("w550 h" (bottomY + 60) " Center")
+ShowProfileEditor() {
+    global WORKER_URL, SESSION_TOKEN_FILE, DISCORD_ID_FILE, COLORS, USER_PROFILE, SECURE_VAULT
+    
+    discordId := ReadDiscordId()
+    if (discordId = "" || discordId = "Unknown") {
+        MsgBox "Discord ID not found!", "Error"
+        return
+    }
+    
+    LoadUserProfile()
+    
+    profileGui := Gui(, "Edit Profile")
+    profileGui.BackColor := COLORS.bg
+    profileGui.SetFont("s10 c" COLORS.text, "Segoe UI")
+    
+    profileGui.Add("Text", "x0 y0 w500 h60 Background" COLORS.accent)
+    profileGui.Add("Text", "x20 y15 w460 h30 c" COLORS.text " BackgroundTrans", "👤 Your Profile").SetFont("s16 bold")
+    
+    profileGui.Add("Text", "x20 y80 w460 c" COLORS.text, "Username:")
+    currentUsername := USER_PROFILE.Has("username") ? USER_PROFILE["username"] : ReadUsername()
+    usernameEdit := profileGui.Add("Edit", "x20 y105 w460 h30 Background" COLORS.card " c" COLORS.text, currentUsername)
+    
+    profileGui.Add("Text", "x20 y150 w460 c" COLORS.text, "Bio (max 500 characters):")
+    currentBio := USER_PROFILE.Has("bio") ? USER_PROFILE["bio"] : ""
+    bioEdit := profileGui.Add("Edit", "x20 y175 w460 h100 Multi Background" COLORS.card " c" COLORS.text, currentBio)
+    
+    profileGui.Add("Text", "x20 y290 w460 c" COLORS.text, "Profile Picture:")
+    
+    ; Show current profile picture if it exists
+    localPicPath := SECURE_VAULT "\profile_picture.png"
+    if FileExist(localPicPath) {
+        try {
+            profileGui.Add("Picture", "x20 y315 w80 h80 BackgroundTrans Border", localPicPath)
+            profileGui.Add("Text", "x110 y330 w370 c" COLORS.success, "✅ Profile picture set")
+        } catch {
+            profileGui.Add("Text", "x20 y315 w460 c" COLORS.textDim, "No profile picture set")
+        }
+    } else {
+        profileGui.Add("Text", "x20 y315 w460 c" COLORS.textDim, "No profile picture set")
+    }
+    
+    uploadBtn := profileGui.Add("Button", "x20 y405 w200 h35 Background" COLORS.accentAlt, "📷 Choose Picture")
+    uploadBtn.SetFont("s10")
+    uploadBtn.OnEvent("Click", (*) => ChooseProfilePicture())
+    
+    profileGui.Add("Text", "x20 y455 w460 c" COLORS.textDim, "Statistics:")
+    totalMacros := USER_PROFILE.Has("total_macros") ? USER_PROFILE["total_macros"] : "0"
+    profileGui.Add("Text", "x20 y480 w460 c" COLORS.text, "Total Macros Run: " totalMacros)
+    
+    saveBtn := profileGui.Add("Button", "x20 y520 w220 h40 Background" COLORS.success, "💾 Save Changes")
+    saveBtn.SetFont("s11 bold")
+    cancelBtn := profileGui.Add("Button", "x260 y520 w220 h40 Background" COLORS.danger, "❌ Cancel")
+    cancelBtn.SetFont("s11 bold")
+    
+    saveBtn.OnEvent("Click", (*) => SaveProfile())
+    cancelBtn.OnEvent("Click", (*) => profileGui.Destroy())
+    
+    profileGui.Show("w500 h580")
+    
+    SaveProfile() {
+        username := usernameEdit.Value
+        bio := bioEdit.Value
+        
+        if (username = "") {
+            MsgBox "Username cannot be empty!", "Error"
+            return
+        }
+        
+        if !FileExist(SESSION_TOKEN_FILE) {
+            MsgBox "Not logged in!", "Error"
+            return
+        }
+        
+        try {
+            sessionToken := Trim(FileRead(SESSION_TOKEN_FILE))
+            
+            body := '{"session_token":"' JsonEscape(sessionToken) '",'
+                  . '"username":"' JsonEscape(username) '",'
+                  . '"bio":"' JsonEscape(bio) '"}'
+            
+            ToolTip "Saving profile..."
+            
+            req := ComObject("WinHttp.WinHttpRequest.5.1")
+            req.SetTimeouts(10000, 10000, 10000, 10000)
+            req.Open("POST", WORKER_URL "/profile/update", false)
+            req.SetRequestHeader("Content-Type", "application/json")
+            req.Send(body)
+            
+            ToolTip
+            
+            if (req.Status = 200) {
+                MsgBox "✅ Profile updated successfully!", "Success", "Iconi T2"
+                LoadUserProfile()
+                profileGui.Destroy()
+            } else {
+                MsgBox "Failed to update profile: " req.Status, "Error"
+            }
+        } catch as err {
+            ToolTip
+            MsgBox "Error: " err.Message, "Error"
+        }
+    }
+    
+    ChooseProfilePicture() {
+        selectedFile := FileSelect(, , "Select Profile Picture", "Images (*.png; *.jpg; *.jpeg; *.gif)")
+        if (selectedFile = "")
+            return
+        
+        fileSize := 0
+        Loop Files, selectedFile
+            fileSize := A_LoopFileSize
+        
+        if (fileSize > 500000) {
+            MsgBox "Image too large! Please use an image under 500KB.", "Error"
+            return
+        }
+        
+        UploadProfilePicture(selectedFile)
+    }
+}
+
+UploadProfilePicture(imagePath) {
+    global WORKER_URL, SESSION_TOKEN_FILE, SECURE_VAULT
+    
+    if !FileExist(imagePath) {
+        MsgBox "Image file not found!", "Error"
+        return false
+    }
+    
+    if !FileExist(SESSION_TOKEN_FILE) {
+        MsgBox "Not logged in!", "Error"
+        return false
+    }
+    
+    try {
+        ; Save profile picture locally FIRST
+        localPicPath := SECURE_VAULT "\profile_picture.png"
+        
+        ToolTip "Saving profile picture locally..."
+        
+        ; Copy the selected image to local storage
+        try {
+            FileCopy imagePath, localPicPath, 1
+        } catch as err {
+            ToolTip
+            MsgBox "Failed to save picture locally: " err.Message, "Error"
+            return false
+        }
+        
+        ; Now upload to server
+        ToolTip "Converting image to base64..."
+        base64 := FileToBase64(imagePath)
+        ToolTip
+        
+        if (StrLen(base64) > 700000) {
+            MsgBox "Image too large! Please use a smaller image (max ~500KB)", "Error"
+            return false
+        }
+        
+        sessionToken := Trim(FileRead(SESSION_TOKEN_FILE))
+        
+        SplitPath imagePath, , , &ext
+        mimeType := "image/" (ext = "jpg" ? "jpeg" : ext)
+        
+        body := '{"session_token":"' JsonEscape(sessionToken) '",'
+              . '"image_data":"data:' mimeType ';base64,' base64 '"}'
+        
+        ToolTip "Uploading profile picture to server..."
+        
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(30000, 30000, 30000, 30000)
+        req.Open("POST", WORKER_URL "/profile/picture", false)
+        req.SetRequestHeader("Content-Type", "application/json")
+        req.Send(body)
+        
+        ToolTip
+        
+        if (req.Status = 200) {
+            MsgBox "✅ Profile picture uploaded successfully!`n`nRestart the launcher to see changes.", "Success", "Iconi T2"
+            return true
+        } else {
+            resp := req.ResponseText
+            MsgBox "Failed to upload to server: " resp "`n`nBut picture was saved locally!", "Partial Success", "Icon!"
+            return true  ; Still return true since local save worked
+        }
+    } catch as err {
+        ToolTip
+        MsgBox "Error uploading picture: " err.Message, "Error"
+    }
+    
+    return false
 }
 
 GetCategories() {
@@ -957,16 +2314,16 @@ GetCategories() {
     
     try {
         Loop Files, BASE_DIR "\*", "D" {
-            folderName := StrLower(A_LoopFileName)
-            ; Exclude icons and utility buttons folder from game categories
-            if (folderName = "icons" || folderName = "buttons")
-                continue
-            arr.Push(A_LoopFileName)
+            folderName := A_LoopFileName
+            ; ✅ V1LN VERSION: ONLY include Pet Simulator 99 folder
+            if (folderName = "Pet Simulator 99")
+                arr.Push(folderName)
         }
     }
     
     return arr
 }
+
 CreateCategoryCard(gui, category, x, y, w, h) {
     global COLORS
     
@@ -1012,20 +2369,23 @@ GetGameIcon(category) {
     
     extensions := ["png", "ico", "jpg", "jpeg"]
     
+    ; First check ICON_DIR
     for ext in extensions {
         iconPath := ICON_DIR "\" category "." ext
         if FileExist(iconPath)
             return iconPath
     }
     
+    ; Then check category folder root
     for ext in extensions {
-        iconPath := BASE_DIR "\" category "." ext
+        iconPath := BASE_DIR "\" category "\icon." ext
         if FileExist(iconPath)
             return iconPath
     }
     
+    ; Check for category name as filename
     for ext in extensions {
-        iconPath := BASE_DIR "\" category "\icon." ext
+        iconPath := BASE_DIR "\" category "\" category "." ext
         if FileExist(iconPath)
             return iconPath
     }
@@ -1067,26 +2427,393 @@ SafeOpenURL(url) {
     }
 }
 
-EnsureHeaderMask(win) {
+; ========== CATEGORY VIEW ==========
+
+OpenCategory(category, sortBy := "favorites", page := 1) {
+    global COLORS, BASE_DIR
+    
+    macros := GetMacrosWithInfo(category, sortBy)
+    
+    if (macros.Length = 0) {
+        MsgBox(
+            "No macros found in '" category "'`n`n"
+            "To add macros:`n"
+            "1. Create a 'Main.ahk' file in each subfolder`n"
+            "2. Or run the update to download macros",
+            "No Macros",
+            "Iconi"
+        )
+        return
+    }
+    
+    win := Gui("-Resize +Border", category " - Macros")
+    win.BackColor := COLORS.bg
+    win.SetFont("s10", "Segoe UI")
+    
+    win.__data := macros
+    win.__cards := []
+    win.__currentPage := page
+    win.__itemsPerPage := 8
+    win.__sortBy := sortBy
+    win.__category := category
+    
+    gameIcon := GetGameIcon(category)
+    if (gameIcon && FileExist(gameIcon)) {
+        try {
+            win.Show("Hide")
+            win.Opt("+Icon" gameIcon)
+        }
+    }
+    
+    win.Add("Text", "x0 y0 w750 h90 Background" COLORS.accent)
+    
+    backBtn := win.Add("Button", "x20 y25 w70 h35 Background" COLORS.accentHover, "← Back")
+    backBtn.SetFont("s10")
+    backBtn.OnEvent("Click", (*) => win.Destroy())
+    
+    title := win.Add("Text", "x105 y20 w400 h100 c" COLORS.text " BackgroundTrans", category)
+    title.SetFont("s22 bold")
+    
+    sortLabel := win.Add("Text", "x530 y25 w60 c" COLORS.text " BackgroundTrans", "Sort by:")
+    sortLabel.SetFont("s9")
+    
+    sortDDL := win.Add("DropDownList", "x530 y45 w200 Background" COLORS.card " c" COLORS.text, 
+        ["⭐ Favorites First", "🔤 Name (A-Z)", "🔤 Name (Z-A)", "📊 Most Used", "📊 Least Used", "📅 Recently Added"])
+    sortDDL.SetFont("s9")
+    
+    sortIndexMap := Map(
+        "favorites", 1,
+        "name_asc", 2,
+        "name_desc", 3,
+        "runs_desc", 4,
+        "runs_asc", 5,
+        "recent", 6
+    )
+    sortDDL.Choose(sortIndexMap.Has(sortBy) ? sortIndexMap[sortBy] : 1)
+    sortDDL.OnEvent("Change", (*) => ChangeSortAndRefresh(win, sortDDL.Text, category))
+    
+    win.__scrollY := 110
+    
+    RenderCards(win)
+    win.Show("w750 h640 Center")
+}
+
+ChangeSortAndRefresh(win, sortText, category) {
+    sortMap := Map(
+        "⭐ Favorites First", "favorites",
+        "🔤 Name (A-Z)", "name_asc",
+        "🔤 Name (Z-A)", "name_desc",
+        "📊 Most Used", "runs_desc",
+        "📊 Least Used", "runs_asc",
+        "📅 Recently Added", "recent"
+    )
+    
+    sortBy := sortMap.Has(sortText) ? sortMap[sortText] : "favorites"
+    
+    win.Destroy()
+    Sleep 100
+    OpenCategory(category, sortBy, 1)  ; Reset to page 1 when sorting
+}
+
+ChangePage(win, direction) {
+    category := win.__category
+    sortBy := win.__sortBy
+    newPage := win.__currentPage + direction
+    
+    totalPages := Ceil(win.__data.Length / win.__itemsPerPage)
+    
+    ; Validate page number
+    if (newPage < 1)
+        newPage := 1
+    if (newPage > totalPages)
+        newPage := totalPages
+    
+    ; Close current window and reopen with new page
+    win.Destroy()
+    Sleep 100
+    OpenCategory(category, sortBy, newPage)
+}
+
+RenderCards(win) {
     global COLORS
-    if !win.HasProp("__mask") || !IsObject(win.__mask) {
-        win.__mask := win.Add("Text", "x0 y90 w750 h25 Background" COLORS.bg)
+    
+    if !win.HasProp("__data")
+        return
+    
+    if win.HasProp("__cards") && win.__cards.Length > 0 {
+        for ctrl in win.__cards {
+            try ctrl.Destroy()
+            catch {
+            }
+        }
+    }
+    win.__cards := []
+    
+    macros := win.__data
+    scrollY := win.__scrollY
+    
+    if (macros.Length = 0) {
+        noResult := win.Add("Text", "x25 y" scrollY " w700 h100 c" COLORS.textDim " Center", "No macros found")
+        noResult.SetFont("s10")
+        win.__cards.Push(noResult)
+        return
+    }
+    
+    itemsPerPage := win.__itemsPerPage
+    currentPage := win.__currentPage
+    totalPages := Ceil(macros.Length / itemsPerPage)
+    
+    if (currentPage > totalPages) {
+        currentPage := totalPages
+        win.__currentPage := currentPage
+    }
+    
+    startIdx := ((currentPage - 1) * itemsPerPage) + 1
+    endIdx := Min(currentPage * itemsPerPage, macros.Length)
+    
+    itemsToShow := endIdx - startIdx + 1
+    
+    if (itemsToShow = 1) {
+        item := macros[startIdx]
+        CreateFullWidthCard(win, item, 25, scrollY, 700, 110)
     } else {
-        try win.__mask.Move(0, 90, 750, 25)
+        cardWidth := 340
+        cardHeight := 110
+        spacing := 10
+        yPos := scrollY
+        
+        Loop itemsToShow {
+            idx := startIdx + A_Index - 1
+            item := macros[idx]
+            
+            col := Mod(A_Index - 1, 2)
+            row := Floor((A_Index - 1) / 2)
+            
+            xPos := 25 + (col * (cardWidth + spacing))
+            yPos := scrollY + (row * (cardHeight + spacing))
+            
+            CreateGridCard(win, item, xPos, yPos, cardWidth, cardHeight)
+        }
+    }
+    
+    if (macros.Length > itemsPerPage) {
+        paginationY := scrollY + 470
+        
+        pageInfo := win.Add("Text", "x25 y" paginationY " w300 c" COLORS.textDim, 
+            "Page " currentPage " of " totalPages " (" macros.Length " total)")
+        pageInfo.SetFont("s9")
+        win.__cards.Push(pageInfo)
+        
+        if (currentPage > 1) {
+            prevBtn := win.Add("Button", "x335 y" (paginationY - 5) " w90 h35 Background" COLORS.accentHover, "← Previous")
+            prevBtn.SetFont("s9")
+            prevBtn.OnEvent("Click", (*) => ChangePage(win, -1))
+            win.__cards.Push(prevBtn)
+        }
+        
+        if (currentPage < totalPages) {
+            nextBtn := win.Add("Button", "x635 y" (paginationY - 5) " w90 h35 Background" COLORS.accentHover, "Next →")
+            nextBtn.SetFont("s9")
+            nextBtn.OnEvent("Click", (*) => ChangePage(win, 1))
+            win.__cards.Push(nextBtn)
+        }
     }
 }
 
-
-OpenCategoryWithSort(category, sortBy := "favorites") {
-    OpenCategory(category)
-    global gCategoryWindows
-    if gCategoryWindows.Has(category) {
-        win := gCategoryWindows[category]
-        win.__sortBy := sortBy
-        win.__data := GetMacrosWithInfo(category, sortBy)
-        win.__currentPage := 1
-        RenderCards(win)
+CreateFullWidthCard(win, item, x, y, w, h) {
+    global COLORS
+    
+    card := win.Add("Text", "x" x " y" y " w" w " h" h " Background" COLORS.card)
+    win.__cards.Push(card)
+    
+    iconPath := GetMacroIcon(item.path)
+    hasIcon := false
+    
+    if (iconPath && FileExist(iconPath)) {
+        try {
+            pic := win.Add("Picture", "x" (x + 20) " y" (y + 15) " w80 h80 BackgroundTrans", iconPath)
+            win.__cards.Push(pic)
+            hasIcon := true
+        } catch {
+        }
     }
+    
+    if (!hasIcon) {
+        initial := SubStr(item.info.Title, 1, 1)
+        iconColor := GetCategoryColor(item.info.Title)
+        badge := win.Add("Text", "x" (x + 20) " y" (y + 15) " w80 h80 Background" iconColor " Center", initial)
+        badge.SetFont("s32 bold c" COLORS.text)
+        win.__cards.Push(badge)
+    }
+    
+    titleCtrl := win.Add("Text", "x" (x + 120) " y" (y + 20) " w340 h100 c" COLORS.text " BackgroundTrans", item.info.Title)
+    titleCtrl.SetFont("s13 bold")
+    win.__cards.Push(titleCtrl)
+    
+    creatorCtrl := win.Add("Text", "x" (x + 120) " y" (y + 50) " w340 c" COLORS.textDim " BackgroundTrans", "by " item.info.Creator)
+    creatorCtrl.SetFont("s10")
+    win.__cards.Push(creatorCtrl)
+    
+    versionCtrl := win.Add("Text", "x" (x + 120) " y" (y + 75) " w60 h22 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
+    versionCtrl.SetFont("s9 bold")
+    win.__cards.Push(versionCtrl)
+    
+    ratings := GetMacroRatings(item.path)
+    
+    if (ratings.total > 0) {
+        ; Show like/dislike ratio with better formatting
+        ratingDisplay := "👍 " ratings.likes " | 👎 " ratings.dislikes " (" ratings.ratio "% positive)"
+        ratingCtrl := win.Add("Text", "x" (x + 120) " y" (y + 95) " w300 c" COLORS.warning " BackgroundTrans", ratingDisplay)
+        ratingCtrl.SetFont("s10 bold")
+        win.__cards.Push(ratingCtrl)
+    } else {
+        ; Show "No ratings yet" message
+        noRatingCtrl := win.Add("Text", "x" (x + 120) " y" (y + 95) " w250 c" COLORS.textDim " BackgroundTrans", "No ratings yet")
+        noRatingCtrl.SetFont("s9")
+        win.__cards.Push(noRatingCtrl)
+    }
+    
+    ; Reviews button
+    reviewsBtn := win.Add("Button", "x" (x + w - 210) " y" (y + 65) " w100 h30 Background" COLORS.accentAlt, "💬 Reviews")
+    reviewsBtn.SetFont("s9")
+    currentPath := item.path
+    currentInfo := item.info
+    reviewsBtn.OnEvent("Click", (*) => ShowRatingsDialog(currentPath, currentInfo))
+    win.__cards.Push(reviewsBtn)
+    
+    runCount := GetRunCount(item.path)
+    if (runCount > 0) {
+        runCountCtrl := win.Add("Text", "x" (x + 190) " y" (y + 75) " w100 h22 c" COLORS.textDim " BackgroundTrans", "Runs: " runCount)
+        runCountCtrl.SetFont("s9")
+        win.__cards.Push(runCountCtrl)
+    }
+    
+    currentPath := item.path
+    isFav := IsFavorite(currentPath)
+    favBtn := win.Add(
+        "Button",
+        "x" (x + w - 145)
+        " y" (y + 20)
+        " w35 h35 Center Background" (isFav ? COLORS.favorite : COLORS.cardHover),
+        isFav ? "★" : "✰"
+    )
+    favBtn.SetFont("s18", "Segoe UI Symbol")
+    favBtn.OnEvent("Click", (*) => ToggleFavoriteAndRefresh(win, currentPath))
+    win.__cards.Push(favBtn)
+    
+    runBtn := win.Add("Button", "x" (x + w - 100) " y" (y + 20) " w90 h35 Background" COLORS.success, "▶ Run")
+    runBtn.SetFont("s11 bold")
+    runBtn.OnEvent("Click", (*) => RunMacro(currentPath))
+    win.__cards.Push(runBtn)
+    
+    if (Trim(item.info.Links) != "") {
+        currentLinks := item.info.Links
+        linksBtn := win.Add("Button", "x" (x + w - 100) " y" (y + 65) " w90 h30 Background" COLORS.accentAlt, "🔗 Links")
+        linksBtn.SetFont("s10")
+        linksBtn.OnEvent("Click", (*) => OpenLinks(currentLinks))
+        win.__cards.Push(linksBtn)
+    }
+}
+
+CreateGridCard(win, item, x, y, w, h) {
+    global COLORS
+    
+    card := win.Add("Text", "x" x " y" y " w" w " h" h " Background" COLORS.card)
+    win.__cards.Push(card)
+    
+    iconPath := GetMacroIcon(item.path)
+    hasIcon := false
+    
+    if (iconPath && FileExist(iconPath)) {
+        try {
+            pic := win.Add("Picture", "x" (x + 15) " y" (y + 15) " w60 h60 BackgroundTrans", iconPath)
+            win.__cards.Push(pic)
+            hasIcon := true
+        } catch {
+        }
+    }
+    
+    if (!hasIcon) {
+        initial := SubStr(item.info.Title, 1, 1)
+        iconColor := GetCategoryColor(item.info.Title)
+        badge := win.Add("Text", "x" (x + 15) " y" (y + 15) " w60 h60 Background" iconColor " Center", initial)
+        badge.SetFont("s24 bold c" COLORS.text)
+        win.__cards.Push(badge)
+    }
+    
+    titleCtrl := win.Add("Text", "x" (x + 90) " y" (y + 15) " w" (w - 190) " h30 c" COLORS.text " BackgroundTrans", item.info.Title)
+    titleCtrl.SetFont("s11 bold")
+    win.__cards.Push(titleCtrl)
+    
+    creatorCtrl := win.Add("Text", "x" (x + 90) " y" (y + 40) " w" (w - 190) " c" COLORS.textDim " BackgroundTrans", "by " item.info.Creator)
+    creatorCtrl.SetFont("s9")
+    win.__cards.Push(creatorCtrl)
+    
+    versionCtrl := win.Add("Text", "x" (x + 90) " y" (y + 63) " w50 h18 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
+    versionCtrl.SetFont("s8 bold")
+    win.__cards.Push(versionCtrl)
+    
+    ; Show ratings on grid cards
+    ratings := GetMacroRatings(item.path)
+    if (ratings.total > 0) {
+        ratingDisplay := "👍 " ratings.likes " 👎 " ratings.dislikes
+        ratingCtrl := win.Add("Text", "x" (x + 90) " y" (y + 85) " w150 c" COLORS.warning " BackgroundTrans", ratingDisplay)
+        ratingCtrl.SetFont("s8 bold")
+        win.__cards.Push(ratingCtrl)
+    }
+    
+    runCount := GetRunCount(item.path)
+    if (runCount > 0) {
+        runCountCtrl := win.Add("Text", "x" (x + 150) " y" (y + 63) " w80 h18 c" COLORS.textDim " BackgroundTrans", "Runs: " runCount)
+        runCountCtrl.SetFont("s8")
+        win.__cards.Push(runCountCtrl)
+    }
+    
+    currentPath := item.path
+    isFav := IsFavorite(currentPath)
+    favBtn := win.Add(
+        "Button",
+        "x" (x + w - 110)
+        " y" (y + 20)
+        " w20 h20 Center Background" (isFav ? COLORS.favorite : COLORS.cardHover),
+        isFav ? "★" : "✰"
+    )
+    favBtn.SetFont("s11", "Segoe UI Symbol")
+    favBtn.OnEvent("Click", (*) => ToggleFavoriteAndRefresh(win, currentPath))
+    win.__cards.Push(favBtn)
+    
+    runBtn := win.Add("Button", "x" (x + w - 90) " y" (y + 15) " w80 h30 Background" COLORS.success, "▶ Run")
+    runBtn.SetFont("s10 bold")
+    runBtn.OnEvent("Click", (*) => RunMacro(currentPath))
+    win.__cards.Push(runBtn)
+    
+    ; Reviews button for grid cards
+    reviewsBtn := win.Add("Button", "x" (x + w - 90) " y" (y + 50) " w80 h22 Background" COLORS.accentAlt, "💬 Reviews")
+    reviewsBtn.SetFont("s8")
+    reviewsBtn.OnEvent("Click", (*) => ShowRatingsDialog(currentPath, item.info))
+    win.__cards.Push(reviewsBtn)
+    
+    if (Trim(item.info.Links) != "") {
+        currentLinks := item.info.Links
+        linksBtn := win.Add("Button", "x" (x + w - 90) " y" (y + 77) " w80 h22 Background" COLORS.card, "🔗 Links")
+        linksBtn.SetFont("s8")
+        linksBtn.OnEvent("Click", (*) => OpenLinks(currentLinks))
+        win.__cards.Push(linksBtn)
+    }
+}
+
+ToggleFavoriteAndRefresh(win, macroPath) {
+    ToggleFavorite(macroPath)
+    
+    ; Get current state
+    category := win.__category
+    sortBy := win.__sortBy
+    currentPage := win.__currentPage
+    
+    ; Close and reopen with same settings
+    win.Destroy()
+    Sleep 100
+    OpenCategory(category, sortBy, currentPage)
 }
 
 GetMacroIcon(macroPath) {
@@ -1098,21 +2825,23 @@ GetMacroIcon(macroPath) {
         
         extensions := ["png", "ico", "jpg", "jpeg"]
         
+        ; Check ICON_DIR first
         for ext in extensions {
             iconPath := ICON_DIR "\" macroName "." ext
             if FileExist(iconPath)
                 return iconPath
         }
         
+        ; Check macro folder for icon.png
         for ext in extensions {
             iconPath := macroDir "\icon." ext
             if FileExist(iconPath)
                 return iconPath
         }
         
-        SplitPath macroDir, , &gameDir
+        ; Check for macro name as filename
         for ext in extensions {
-            iconPath := gameDir "\" macroName "." ext
+            iconPath := macroDir "\" macroName "." ext
             if FileExist(iconPath)
                 return iconPath
         }
@@ -1137,15 +2866,13 @@ GetMacrosWithInfo(category, sortBy := "favorites") {
             if FileExist(mainFile) {
                 try {
                     info := ReadMacroInfo(subFolder)
-realPath := mainFile
-if !InStr(realPath, "\Main.ahk")
-    realPath := subFolder "\Main.ahk"
-
-out.Push({
-    path: realPath,
-    info: info
-})
-
+                    ; ✅ FILTER: Only add macro if Released is not "No"
+                    if (StrLower(info.Released) != "no") {
+                        out.Push({
+                            path: mainFile,
+                            info: info
+                        })
+                    }
                 }
             }
         }
@@ -1156,10 +2883,13 @@ out.Push({
         if FileExist(mainFile) {
             try {
                 info := ReadMacroInfo(base)
-                out.Push({
-                    path: mainFile,
-                    info: info
-                })
+                ; ✅ FILTER: Only add macro if Released is not "No"
+                if (StrLower(info.Released) != "no") {
+                    out.Push({
+                        path: mainFile,
+                        info: info
+                    })
+                }
             }
         }
     }
@@ -1186,9 +2916,145 @@ out.Push({
     return out
 }
 
+SortByFavorites(macros) {
+    favs := []
+    nonFavs := []
+    
+    for item in macros {
+        if IsFavorite(item.path)
+            favs.Push(item)
+        else
+            nonFavs.Push(item)
+    }
+    
+    sorted := []
+    for item in favs
+        sorted.Push(item)
+    for item in nonFavs
+        sorted.Push(item)
+    
+    return sorted
+}
+
+SortByName(macros, ascending := true) {
+    if (macros.Length <= 1)
+        return macros
+    
+    sorted := macros.Clone()
+    
+    Loop sorted.Length - 1 {
+        i := A_Index
+        Loop sorted.Length - i {
+            j := A_Index + i
+            
+            titleI := ""
+            titleJ := ""
+            
+            try {
+                if IsObject(sorted[i]) && IsObject(sorted[i].info) && sorted[i].info.HasProp("Title")
+                    titleI := sorted[i].info.Title
+            }
+            
+            try {
+                if IsObject(sorted[j]) && IsObject(sorted[j].info) && sorted[j].info.HasProp("Title")
+                    titleJ := sorted[j].info.Title
+            }
+            
+            if (titleI = "" || titleJ = "")
+                continue
+            
+            comparison := StrCompare(StrLower(titleI), StrLower(titleJ))
+            
+            if ascending {
+                if (comparison > 0) {
+                    temp := sorted[i]
+                    sorted[i] := sorted[j]
+                    sorted[j] := temp
+                }
+            } else {
+                if (comparison < 0) {
+                    temp := sorted[i]
+                    sorted[i] := sorted[j]
+                    sorted[j] := temp
+                }
+            }
+        }
+    }
+    
+    return sorted
+}
+
+SortByRuns(macros, ascending := true) {
+    if (macros.Length <= 1)
+        return macros
+    
+    sorted := macros.Clone()
+    
+    Loop sorted.Length - 1 {
+        i := A_Index
+        Loop sorted.Length - i {
+            j := A_Index + i
+            
+            runI := 0
+            runJ := 0
+            
+            try {
+                if IsObject(sorted[i]) && sorted[i].HasProp("path")
+                    runI := GetRunCount(sorted[i].path)
+            }
+            
+            try {
+                if IsObject(sorted[j]) && sorted[j].HasProp("path")
+                    runJ := GetRunCount(sorted[j].path)
+            }
+            
+            if ascending {
+                if (runI > runJ) {
+                    temp := sorted[i]
+                    sorted[i] := sorted[j]
+                    sorted[j] := temp
+                }
+            } else {
+                if (runI < runJ) {
+                    temp := sorted[i]
+                    sorted[i] := sorted[j]
+                    sorted[j] := temp
+                }
+            }
+        }
+    }
+    
+    return sorted
+}
+
+SortByRecent(macros) {
+    global favorites
+    sorted := macros.Clone()
+    
+    Loop sorted.Length - 1 {
+        i := A_Index
+        Loop sorted.Length - i {
+            j := A_Index + i
+            
+            keyI := GetMacroKey(sorted[i].path)
+            keyJ := GetMacroKey(sorted[j].path)
+            
+            timeI := favorites.Has(keyI) ? favorites[keyI].addedAt : "0"
+            timeJ := favorites.Has(keyJ) ? favorites[keyJ].addedAt : "0"
+            
+            if (timeI < timeJ) {
+                temp := sorted[i]
+                sorted[i] := sorted[j]
+                sorted[j] := temp
+            }
+        }
+    }
+    
+    return sorted
+}
+
 JsonLoad(jsonText) {
     static doc := ComObject("htmlfile")
-    ; Ensure a window exists
     doc.write("<meta http-equiv='X-UA-Compatible' content='IE=9'>")
     return doc.parentWindow.JSON.parse(jsonText)
 }
@@ -1213,7 +3079,8 @@ ReadMacroInfo(macroDir) {
         Title: "",
         Creator: "",
         Version: "",
-        Links: ""
+        Links: "",
+        Released: "Yes"  ; Default to Yes if not specified
     }
     
     try {
@@ -1259,6 +3126,8 @@ ReadMacroInfo(macroDir) {
                 info.Version := v
             case "links":
                 info.Links := v
+            case "released":
+                info.Released := v
         }
     }
     
@@ -1270,68 +3139,6 @@ ReadMacroInfo(macroDir) {
     return info
 }
 
-; 1. ADD THIS FUNCTION (from Public Release)
-OnSetGlobalPassword(defaultUser, *) {
-    pw := InputBox("Enter NEW universal password (this pushes to global manifest).", "V1LN Clan - Set Global Password", "Password w560 h190")
-    if (pw.Result != "OK")
-        return
-
-    newPass := Trim(pw.Value)
-    if (newPass = "") {
-        MsgBox "Password cannot be blank.", "V1LN Clan - Invalid", "Icon! 0x30"
-        return
-    }
-
-    h := HashPassword(newPass)
-    body := '{"cred_user":"' defaultUser '","cred_hash":"' h '"}'
-
-    try {
-        WorkerPost("/cred/set", body)
-        MsgBox "✅ Global password updated in manifest.`n`nNew cred_hash: " h, "V1LN Clan", "Iconi"
-    } catch as err {
-        MsgBox "❌ Failed to set global password:`n" err.Message, "V1LN Clan", "Icon! 0x10"
-    }
-}
-
-; 2. ADD THIS FUNCTION (from Public Release)
-HashPassword(password) {
-    salt := "V1LN_CLAN_2026_SECURE"
-    combined := salt . password . salt
-    
-    hash := 0
-    Loop Parse combined
-        hash := Mod(hash * 31 + Ord(A_LoopField), 2147483647)
-    
-    Loop 10000 {
-        hash := Mod(hash * 37 + Ord(SubStr(password, Mod(A_Index, StrLen(password)) + 1, 1)), 2147483647)
-    }
-    
-    return hash
-}
-
-; 3. ADD THIS FUNCTION (from Public Release)
-CopyManifestCredentialSnippet(username) {
-    pw := InputBox(
-        "Enter the NEW universal password.`n`nThis will copy cred_user + cred_hash for manifest.json.",
-        "V1LN Clan - Generate manifest snippet",
-        "Password w560 h190"
-    )
-    if (pw.Result != "OK")
-        return
-
-    newPass := Trim(pw.Value)
-    if (newPass = "") {
-        MsgBox "Password cannot be blank.", "V1LN Clan - Invalid", "Icon! 0x30"
-        return
-    }
-
-    h := HashPassword(newPass)
-    snippet := '"cred_user": "' username '",' "`n" '"cred_hash": "' h '"'
-    A_Clipboard := snippet
-
-    MsgBox "✅ Copied to clipboard.`n`nPaste into manifest.json:`n`n" snippet, "V1LN Clan", "Iconi"
-}
-
 RunMacro(path) {
     if !FileExist(path) {
         MsgBox "Macro not found:`n" path, "Error", "Icon!"
@@ -1340,11 +3147,43 @@ RunMacro(path) {
     
     IncrementRunCount(path)
     
+    ; NEW: Track macro execution with analytics
+    startTime := A_TickCount
+    
+    try {
+        SplitPath path, , &dir
+        SplitPath dir, &macroName
+        
+        ; Determine category from path
+        category := "Uncategorized"
+        pathParts := StrSplit(path, "\")
+        if (pathParts.Length >= 3) {
+            ; Try to get category from path (e.g., BASE_DIR\CategoryName\MacroName)
+            category := pathParts[pathParts.Length - 1]
+        }
+        
+        SendMacroRunNotification(macroName, path)
+        
+        ; NEW: Track analytics after a short delay
+        macroId := category "_" macroName
+        SetTimer () => TrackAfterRun(macroId, macroName, category, startTime), -2000
+    }
+    
     try {
         SplitPath path, , &dir
         Run '"' A_AhkPath '" "' path '"', dir
     } catch as err {
         MsgBox "Failed to run macro: " err.Message, "Error", "Icon!"
+    }
+}
+
+; NEW: Helper function to track macro after it runs
+TrackAfterRun(macroId, macroName, category, startTime) {
+    duration := A_TickCount - startTime
+    try {
+        TrackMacroUsage(macroId, macroName, category, duration)
+    } catch {
+        ; Silent fail - don't interrupt user
     }
 }
 
@@ -1364,191 +3203,59 @@ OpenLinks(links) {
 }
 
 CompleteUninstall(*) {
-    global APP_DIR, SECURE_VAULT, BASE_DIR, ICON_DIR, VERSION_FILE, MACHINE_KEY
-    global CRED_FILE, SESSION_FILE, DISCORD_ID_FILE, DISCORD_BAN_FILE
-    global ADMIN_DISCORD_FILE, SESSION_LOG_FILE, MACHINE_BAN_FILE
-    global HWID_BINDING_FILE, LAST_CRED_HASH_FILE, SECURE_CONFIG_FILE
-    global ENCRYPTED_KEY_FILE, MASTER_KEY_ROTATION_FILE
+    global APP_DIR, SECURE_VAULT, BASE_DIR, ICON_DIR, VERSION_FILE
     
     choice := MsgBox(
         "⚠️ WARNING ⚠️`n`n"
         . "This will permanently delete:`n"
         . "• All downloaded macros`n"
         . "• All icons and resources`n"
-        . "• All encrypted data`n"
-        . "• Version information`n"
-        . "• Security keys and vault data`n"
-        . "• All login credentials and sessions`n"
-        . "• Discord ID and ban records`n`n"
+        . "• All stats and favorites`n"
+        . "• Version information`n`n"
         . "This action CANNOT be undone!`n`n"
-        . "Are you sure you want to completely uninstall?",
-        "Complete Uninstall",
+        . "Are you sure you want to uninstall?",
+        "Uninstall AHK Vault",
         "YesNo Icon! Default2"
     )
     
-    if (choice = "No") {
-        return
-    }
-    
-    choice2 := MsgBox(
-        "⚠️ FINAL WARNING ⚠️`n`n"
-        . "This will permanently delete:`n"
-        . "• All downloaded macros`n"
-        . "• All encrypted files`n"
-        . "• All icons and resources`n"
-        . "• All version information`n"
-        . "• Machine registration keys`n"
-        . "• All authentication data`n"
-        . "• All session history`n`n"
-        . "This cannot be undone!`n`n"
-        . "Are you ABSOLUTELY sure?",
-        "Confirm Complete Removal",
-        "YesNo Icon! Default2"
-    )
-    
-    if (choice2 = "No")
+    if (choice = "No")
         return
     
     try {
-        ; Clear authentication files first
-        try {
-            if FileExist(CRED_FILE) {
-                RunWait 'attrib -h -s -r "' CRED_FILE '"', , "Hide"
-                FileDelete CRED_FILE
-            }
-        }
-        
-        try {
-            if FileExist(SESSION_FILE) {
-                RunWait 'attrib -h -s -r "' SESSION_FILE '"', , "Hide"
-                FileDelete SESSION_FILE
-            }
-        }
-        
-        try {
-            if FileExist(DISCORD_ID_FILE) {
-                RunWait 'attrib -h -s -r "' DISCORD_ID_FILE '"', , "Hide"
-                FileDelete DISCORD_ID_FILE
-            }
-        }
-        
-        try {
-            if FileExist(DISCORD_BAN_FILE) {
-                RunWait 'attrib -h -s -r "' DISCORD_BAN_FILE '"', , "Hide"
-                FileDelete DISCORD_BAN_FILE
-            }
-        }
-        
-        try {
-            if FileExist(ADMIN_DISCORD_FILE) {
-                RunWait 'attrib -h -s -r "' ADMIN_DISCORD_FILE '"', , "Hide"
-                FileDelete ADMIN_DISCORD_FILE
-            }
-        }
-        
-        try {
-            if FileExist(SESSION_LOG_FILE) {
-                RunWait 'attrib -h -s -r "' SESSION_LOG_FILE '"', , "Hide"
-                FileDelete SESSION_LOG_FILE
-            }
-        }
-        
-        try {
-            if FileExist(MACHINE_BAN_FILE) {
-                RunWait 'attrib -h -s -r "' MACHINE_BAN_FILE '"', , "Hide"
-                FileDelete MACHINE_BAN_FILE
-            }
-        }
-        
-        try {
-            if FileExist(HWID_BINDING_FILE) {
-                RunWait 'attrib -h -s -r "' HWID_BINDING_FILE '"', , "Hide"
-                FileDelete HWID_BINDING_FILE
-            }
-        }
-        
-        try {
-            if FileExist(LAST_CRED_HASH_FILE) {
-                RunWait 'attrib -h -s -r "' LAST_CRED_HASH_FILE '"', , "Hide"
-                FileDelete LAST_CRED_HASH_FILE
-            }
-        }
-        
-        try {
-            if FileExist(SECURE_CONFIG_FILE) {
-                RunWait 'attrib -h -s -r "' SECURE_CONFIG_FILE '"', , "Hide"
-                FileDelete SECURE_CONFIG_FILE
-            }
-        }
-        
-        try {
-            if FileExist(ENCRYPTED_KEY_FILE) {
-                RunWait 'attrib -h -s -r "' ENCRYPTED_KEY_FILE '"', , "Hide"
-                FileDelete ENCRYPTED_KEY_FILE
-            }
-        }
-        
-        try {
-            if FileExist(MASTER_KEY_ROTATION_FILE) {
-                RunWait 'attrib -h -s -r "' MASTER_KEY_ROTATION_FILE '"', , "Hide"
-                FileDelete MASTER_KEY_ROTATION_FILE
-            }
-        }
-        
-        ; Remove version file
         if FileExist(VERSION_FILE) {
-            RunWait 'attrib -h -s -r "' VERSION_FILE '"', , "Hide"
-            FileDelete VERSION_FILE
+            try FileDelete VERSION_FILE
         }
         
-        ; Remove directories
         if DirExist(BASE_DIR) {
-            RunWait 'attrib -h -s -r "' BASE_DIR '" /s /d', , "Hide"
-            DirDelete BASE_DIR, true
+            try DirDelete BASE_DIR, true
         }
         
         if DirExist(ICON_DIR) {
-            RunWait 'attrib -h -s -r "' ICON_DIR '" /s /d', , "Hide"
-            DirDelete ICON_DIR, true
+            try DirDelete ICON_DIR, true
         }
         
         if DirExist(SECURE_VAULT) {
-            RunWait 'attrib -h -s -r "' SECURE_VAULT '" /s /d', , "Hide"
-            DirDelete SECURE_VAULT, true
+            try DirDelete SECURE_VAULT, true
         }
         
         if DirExist(APP_DIR) {
-            RunWait 'attrib -h -s -r "' APP_DIR '"', , "Hide"
-            DirDelete APP_DIR, true
+            try DirDelete APP_DIR, true
         }
         
-        ; Clear registry entries (machine key rotation data)
         regPath := "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\SessionInfo"
         try RegDelete regPath, "MachineGUID"
-        try RegDelete regPath, "KeyHistory"
-        try RegDelete regPath, "LastRotation"
-        
-        ; Clear lockout file if exists
-        try {
-            if FileExist(A_Temp "\.lockout") {
-                FileDelete A_Temp "\.lockout"
-            }
-        }
         
         MsgBox(
-            "✅ Complete uninstall successful!`n`n"
+            "✅ Uninstall successful!`n`n"
             . "Removed:`n"
-            . "• All macros and encrypted data`n"
+            . "• All macros and data`n"
             . "• All icons and resources`n"
-            . "• All authentication files`n"
-            . "• All session history`n"
-            . "• All registry keys`n"
-            . "• All ban records`n`n"
+            . "• Registry keys`n`n"
             . "The launcher will now close.",
             "Uninstall Complete",
             "Iconi"
         )
-        
+        SendUninstallNotification()
         ExitApp
         
     } catch as err {
@@ -1603,9 +3310,28 @@ ShowChangelog(*) {
 ; ========== HELPER FUNCTIONS ==========
 
 TryDirMove(src, dst, overwrite := true, retries := 10) {
+    ; FIX: Ensure destination parent directory exists
+    try {
+        SplitPath dst, , &parentDir
+        if (parentDir != "" && !DirExist(parentDir)) {
+            DirCreate parentDir
+        }
+    } catch {
+        ; If we can't create parent, DirMove will fail anyway
+    }
+    
+    ; If destination exists and we want to overwrite, delete it first
+    if (DirExist(dst) && overwrite) {
+        try {
+            DirDelete dst, true
+        } catch {
+            ; Ignore deletion errors
+        }
+    }
+    
     loop retries {
         try {
-            DirMove src, dst, overwrite ? 1 : 0
+            DirMove src, dst, overwrite ? 2 : 0
             return true
         } catch as err {
             Sleep 250
@@ -1617,6 +3343,16 @@ TryDirMove(src, dst, overwrite := true, retries := 10) {
 }
 
 TryFileCopy(src, dst, overwrite := true, retries := 10) {
+    ; FIX: Ensure destination parent directory exists
+    try {
+        SplitPath dst, , &parentDir
+        if (parentDir != "" && !DirExist(parentDir)) {
+            DirCreate parentDir
+        }
+    } catch {
+        ; If we can't create parent, FileCopy will fail anyway
+    }
+    
     loop retries {
         try {
             FileCopy src, dst, overwrite ? 1 : 0
@@ -1639,7 +3375,7 @@ ShowUpdateFail(context, err, extra := "") {
         . "A_WorkingDir: " A_WorkingDir "`n"
         . "AppData: " A_AppData
 
-    MsgBox msg, "V1LN Clan - Update Failed", "Icon! 0x10"
+    MsgBox msg, "AHK vault - Update Failed", "Icon! 0x10"
 }
 
 IsValidZip(path) {
@@ -1659,31 +3395,6 @@ IsValidZip(path) {
     }
 }
 
-; ========== ADMIN PANEL ==========
-
-FetchMasterKeyFromManifest() {
-    global MASTER_KEY, MANIFEST_URL
-    
-    try {
-        tmp := A_Temp "\manifest_config.json"
-        if SafeDownload(MANIFEST_URL, tmp, 20000) {
-            json := FileRead(tmp, "UTF-8")
-            if RegExMatch(json, '"master_key"\s*:\s*"([^"]+)"', &m) {
-                MASTER_KEY := m[1]
-                return true
-            }
-        }
-    } catch {
-    }
-    
-    if (MASTER_KEY = "") {
-        MASTER_KEY := GenerateRandomKey(32)
-        return false
-    }
-    
-    return false
-}
-
 GenerateRandomKey(length := 32) {
     chars := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*"
     key := ""
@@ -1697,781 +3408,15 @@ GenerateRandomKey(length := 32) {
 }
 
 WorkerPost(endpoint, bodyJson) {
-    global WORKER_URL, MASTER_KEY
-
-    if !IsSet(WORKER_URL) || (Trim(WORKER_URL) = "")
-        throw Error("WORKER_URL is not set.")
-    if !IsSet(MASTER_KEY) || (Trim(MASTER_KEY) = "")
-        throw Error("MASTER_KEY is not set.")
-
-    url := RTrim(WORKER_URL, "/") "/" LTrim(endpoint, "/")
-
-    req := ComObject("WinHttp.WinHttpRequest.5.1")
-
-    ; IMPORTANT: Do NOT set req.Option[6] unless you know the correct protocol bitmask.
-    ; req.Option[6] := 1 breaks TLS on many systems.
-
-    ; timeouts: resolve, connect, send, receive (ms)
-    req.SetTimeouts(15000, 15000, 15000, 15000)
-
-    req.Open("POST", url, false)
-    req.SetRequestHeader("Content-Type", "application/json; charset=utf-8")
-    req.SetRequestHeader("Accept", "application/json")
-    req.SetRequestHeader("X-Master-Key", MASTER_KEY)
-    req.SetRequestHeader("User-Agent", "v1ln-clan")
-
-    ; Send body
-    req.Send(bodyJson)
-
-    status := 0
-    resp := ""
-    try status := req.Status
-    try resp := req.ResponseText
-
-    if (status < 200 || status >= 300) {
-        ; include response body for debugging Worker errors
-        throw Error("Worker error " status ": " resp)
-    }
-    return resp
-}
-
-GetLinesFromFile(path) {
-    arr := []
-    if !FileExist(path)
-        return arr
-    try {
-        txt := FileRead(path, "UTF-8")
-        for line in StrSplit(txt, "`n", "`r") {
-            line := Trim(line)
-            if (line != "")
-                arr.Push(line)
-        }
-    } catch {
-    }
-    return arr
-}
-
-WriteLinesToFile(path, arr) {
-    out := ""
-    for x in arr
-        out .= Trim(x) "`n"
-    try {
-        if FileExist(path)
-            FileDelete path
-        if (Trim(out) != "")
-            FileAppend out, path
-    } catch {
-    }
-}
-
-ResyncListsFromManifestNow() {
-    global MANIFEST_URL, DISCORD_BAN_FILE, ADMIN_DISCORD_FILE, HWID_BAN_FILE
-    
-    tmp := A_Temp "\manifest_live.json"
-    
-    if !SafeDownload(NoCacheUrl(MANIFEST_URL), tmp, 20000)
-        throw Error("Failed to download manifest from server.")
-    
-    json := FileRead(tmp, "UTF-8")
-    lists := ParseManifestLists(json)
-    
-    if !IsObject(lists)
-        throw Error("Failed to parse manifest lists.")
-    
-    OverwriteListFile(DISCORD_BAN_FILE, lists.banned)
-    OverwriteListFile(ADMIN_DISCORD_FILE, lists.admins)
-    OverwriteListFile(HWID_BAN_FILE, lists.banned_hwids)
-    
-    return lists
-}
-
-ParseManifestLists(json) {
-    obj := { banned: [], admins: [], banned_hwids: [] }
-
-    ; banned_discord_ids
-    if RegExMatch(json, '(?s)"banned_discord_ids"\s*:\s*\[(.*?)\]', &m1) {
-        inner := m1[1]
-        pos := 1
-        while (pos := RegExMatch(inner, '"(\d{6,30})"', &mItem, pos)) {
-            obj.banned.Push(mItem[1])
-            pos += StrLen(mItem[0])
-        }
-    }
-
-    ; admin_discord_ids
-    if RegExMatch(json, '(?s)"admin_discord_ids"\s*:\s*\[(.*?)\]', &m2) {
-        inner := m2[1]
-        pos := 1
-        while (pos := RegExMatch(inner, '"(\d{6,30})"', &mItem2, pos)) {
-            obj.admins.Push(mItem2[1])
-            pos += StrLen(mItem2[0])
-        }
-    }
-
-    ; banned_hwids
-    if RegExMatch(json, '(?s)"banned_hwids"\s*:\s*\[(.*?)\]', &m3) {
-        inner := m3[1]
-        pos := 1
-        while (pos := RegExMatch(inner, '"([^"]+)"', &mItem3, pos)) {
-            v := Trim(mItem3[1])
-            if (v != "")
-                obj.banned_hwids.Push(v)
-            pos += StrLen(mItem3[0])
-        }
-    }
-
-    return obj
-}
-
-OverwriteListFile(filePath, arr) {
-    try {
-        if (arr.Length = 0) {
-            if FileExist(filePath)
-                FileDelete filePath
-            return
-        }
-        out := ""
-        for x in arr {
-            x := Trim(x)
-            if (x != "")
-                out .= x "`n"
-        }
-        if FileExist(filePath)
-            FileDelete filePath
-        FileAppend out, filePath
-    } catch {
-    }
-}
-
-AdminPanel(*) {
-    global MASTER_KEY, COLORS, DISCORD_BAN_FILE, ADMIN_DISCORD_FILE
-    
-    FetchMasterKeyFromManifest()
-    
-    ib := InputBox("Enter MASTER KEY to open Admin Panel:", "V1LN Clan - Admin Panel", "Password w460 h170")
-    if (ib.Result != "OK")
-        return
-    if (Trim(ib.Value) != MASTER_KEY) {
-        MsgBox "❌ Invalid master key.", "V1LN Clan - Access Denied", "Icon! 0x10"
-        return
-    }
-    
-    adminGui := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "V1LN Clan - Admin Panel")
-    adminGui.BackColor := COLORS.bg
-    adminGui.SetFont("s9 c" COLORS.text, "Segoe UI")
-    
-    adminGui.Add("Text", "x0 y0 w900 h70 Background" COLORS.accent)
-    adminGui.Add("Text", "x20 y20 w860 h30 c" COLORS.text " BackgroundTrans", "Admin Panel").SetFont("s18 bold")
-    testWebhookBtn := adminGui.Add("Button", "x690 y590 w200 h34 Background" COLORS.accentAlt, "Test Webhook Ping")
-testWebhookBtn.OnEvent("Click", (*) => TestWebhookPromptAndSend())
-
-    ; ===== LOGIN LOG =====
-    adminGui.Add("Text", "x10 y85 w880 c" COLORS.textDim, "✅ Login Log (successful logins)")
-    lv := adminGui.Add("ListView"
-        , "x10 y105 w880 h210 Background" COLORS.card " c" COLORS.text
-        , ["Time", "PC Name", "Discord ID", "Role", "HWID"])
-    LoadGlobalSessionLogIntoListView(lv, 200)
-
-    adminGui.Add("Text", "x10 y325 w880 h1 Background" COLORS.border)
-    
-    ; ===== DISCORD BAN =====
-    adminGui.Add("Text", "x10 y335 w880 c" COLORS.textDim, "🔒 Global Ban Management")
-    
-    adminGui.Add("Text", "x10 y360 w120 c" COLORS.text, "Discord ID:")
-    banEdit := adminGui.Add("Edit", "x130 y356 w370 h28 Background" COLORS.bgLight " c" COLORS.text)
-    
-    banBtn := adminGui.Add("Button", "x520 y356 w110 h28 Background" COLORS.danger, "BAN")
-    unbanBtn := adminGui.Add("Button", "x640 y356 w110 h28 Background" COLORS.success, "UNBAN")
-    
-    bannedLbl := adminGui.Add("Text", "x10 y390 w880 c" COLORS.textDim, "")
-    RefreshBannedFromServer(bannedLbl)
-    
-    ; ===== HWID BAN =====
-adminGui.Add("Text", "x10 y420 w120 c" COLORS.text, "HWID:")
-hwidEdit := adminGui.Add("Edit", "x130 y416 w370 h28 Background" COLORS.bgLight " c" COLORS.text)
-
-; Initialize with current machine's HWID
-try {
-    currentHwid := GetHardwareId()
-    if (currentHwid != "")
-        hwidEdit.Value := currentHwid
-} catch {
-    ; Silent fail - user can enter manually
-}
-
-banHwidBtn := adminGui.Add("Button", "x520 y416 w110 h28 Background" COLORS.danger, "BAN HWID")
-unbanHwidBtn := adminGui.Add("Button", "x640 y416 w110 h28 Background" COLORS.success, "UNBAN HWID")
-    
-    bannedHwidLbl := adminGui.Add("Text", "x10 y450 w880 c" COLORS.textDim, "")
-    try RefreshBannedHwidLabel(bannedHwidLbl)
-    
-    adminGui.Add("Text", "x10 y480 w880 h1 Background" COLORS.border)
-    
-    ; ===== ADMIN IDS =====
-    adminGui.Add("Text", "x10 y490 w880 c" COLORS.textDim, "🛡️ Admin Discord IDs")
-    
-    adminGui.Add("Text", "x10 y515 w120 c" COLORS.text, "Admin ID:")
-    adminEdit := adminGui.Add("Edit", "x130 y511 w370 h28 Background" COLORS.bgLight " c" COLORS.text)
-    
-    addAdminBtn := adminGui.Add("Button", "x520 y511 w110 h28 Background" COLORS.accentAlt, "Add")
-    delAdminBtn := adminGui.Add("Button", "x640 y511 w110 h28 Background" COLORS.danger, "Remove")
-    
-    adminLbl := adminGui.Add("Text", "x10 y545 w880 c" COLORS.textDim, "")
-    RefreshAdminDiscordLabel(adminLbl)
-    
-    adminGui.Add("Text", "x10 y575 w880 h1 Background" COLORS.border)
-    
-    ; ===== BUTTONS =====
-    refreshBtn := adminGui.Add("Button", "x10 y590 w130 h34 Background" COLORS.card, "Refresh Log")
-    clearLogBtn := adminGui.Add("Button", "x150 y590 w130 h34 Background" COLORS.card, "Clear Log")
-    setPassBtn := adminGui.Add("Button", "x290 y590 w190 h34 Background" COLORS.accentAlt, "Set Global Password")
-    copySnippetBtn := adminGui.Add("Button", "x490 y590 w190 h34 Background" COLORS.card, "Copy Manifest Snippet")
-    
-    ; ===== EVENTS =====
-    banBtn.OnEvent("Click", OnBanDiscordId.Bind(banEdit, bannedLbl))
-    unbanBtn.OnEvent("Click", OnUnbanDiscordId.Bind(banEdit, bannedLbl))
-    
-    banHwidBtn.OnEvent("Click", OnBanHwid.Bind(hwidEdit, bannedHwidLbl))
-    unbanHwidBtn.OnEvent("Click", OnUnbanHwid.Bind(hwidEdit, bannedHwidLbl))
-    
-    addAdminBtn.OnEvent("Click", OnAddAdminDiscord.Bind(adminEdit, adminLbl))
-    delAdminBtn.OnEvent("Click", OnRemoveAdminDiscord.Bind(adminEdit, adminLbl))
-    
-    refreshBtn.OnEvent("Click", (*) => LoadGlobalSessionLogIntoListView(lv, 200))
-    clearLogBtn.OnEvent("Click", OnClearLog.Bind(lv))
-    
-    adminGui.OnEvent("Close", (*) => adminGui.Destroy())
-    adminGui.Show("w900 h640 Center")
-
-    setPassBtn.OnEvent("Click", OnSetGlobalPassword.Bind(DEFAULT_USER))
-    copySnippetBtn.OnEvent("Click", OnCopySnippet.Bind(DEFAULT_USER))
-}
-
-OnCopySnippet(defaultUser, *) {
-    CopyManifestCredentialSnippet(defaultUser)
-}
-
-OnClearLog(lv, *) {
-    try {
-        WorkerPost("/logs/clear", "{}")
-        LoadGlobalSessionLogIntoListView(lv, 200)
-        MsgBox "✅ Global login log cleared.", "V1LN Clan - Admin", "Iconi"
-    } catch as err {
-        MsgBox "❌ Clear failed:`n" err.Message, "V1LN Clan - Admin", "Icon!"
-    }
-}
-
-OnBanDiscordId(banEdit, bannedLbl, *) {
-    did := Trim(banEdit.Value)
-    if (did = "" || !RegExMatch(did, "^\d{6,30}$")) {
-        MsgBox "Enter a valid Discord ID (numbers only).", "V1LN Clan - Admin", "Icon!"
-        return
-    }
-
-    try {
-        WorkerPost("/ban", '{"discord_id":"' did '"}')
-        AddBannedDiscordId(did)
-        RefreshBannedFromServer(bannedLbl)
-        MsgBox "✅ Globally BANNED: " did, "V1LN Clan - Admin", "Iconi"
-    } catch as err {
-        MsgBox "❌ Failed to ban globally:`n" err.Message, "V1LN Clan - Admin", "Icon!"
-    }
-}
-
-OnUnbanDiscordId(banEdit, bannedLbl, *) {
-    did := Trim(banEdit.Value)
-    did := RegExReplace(did, "[^\d]", "")
-
-    if (did = "" || !RegExMatch(did, "^\d{6,30}$")) {
-        MsgBox "Enter a valid Discord ID (numbers only).", "V1LN Clan - Admin", "Icon!"
-        return
-    }
-
-    try {
-        WorkerPost("/unban", '{"discord_id":"' did '"}')
-
-        stillThere := true
-        lists := 0
-
-        Loop 6 {
-            Sleep 700
-            lists := ResyncListsFromManifestNow()
-            RefreshBannedFromServer(bannedLbl)
-
-            stillThere := false
-            for x in lists.banned {
-                if (Trim(x) = did) {
-                    stillThere := true
-                    break
-                }
-            }
-
-            if !stillThere
-                break
-        }
-
-        if stillThere {
-            MsgBox "⚠️ Unban request sent, but ID is STILL in global manifest (GitHub may be caching/lagging).`n`nID: " did, "V1LN Clan - Admin", "Icon! 0x30"
-        } else {
-            MsgBox "✅ Globally UNBANNED: " did, "V1LN Clan - Admin", "Iconi"
-        }
-    } catch as err {
-        MsgBox "❌ Failed to unban globally:`n" err.Message, "V1LN Clan - Admin", "Icon!"
-    }
-}
-
-OnAddAdminDiscord(adminEdit, adminLbl, *) {
-    did := Trim(adminEdit.Value)
-    if (did = "" || !RegExMatch(did, "^\d{6,30}$")) {
-        MsgBox "Enter a valid Discord ID (numbers only).", "V1LN Clan - Admin", "Icon!"
-        return
-    }
-
-    try {
-        WorkerPost("/admin/add", '{"discord_id":"' did '"}')
-        AddAdminDiscordId(did)
-        RefreshAdminDiscordLabel(adminLbl)
-        MsgBox "✅ Globally added admin: " did, "V1LN Clan - Admin", "Iconi"
-    } catch as err {
-        MsgBox "❌ Failed to add admin globally:`n" err.Message, "V1LN Clan - Admin", "Icon!"
-    }
-}
-
-OnRemoveAdminDiscord(adminEdit, adminLbl, *) {
-    did := Trim(adminEdit.Value)
-    if (did = "" || !RegExMatch(did, "^\d{6,30}$")) {
-        MsgBox "Enter a valid Discord ID (numbers only).", "V1LN Clan - Admin", "Icon!"
-        return
-    }
-
-    try {
-        WorkerPost("/admin/remove", '{"discord_id":"' did '"}')
-        RemoveAdminDiscordId(did)
-        RefreshAdminDiscordLabel(adminLbl)
-        MsgBox "✅ Globally removed admin: " did, "V1LN Clan - Admin", "Iconi"
-    } catch as err {
-        MsgBox "❌ Failed to remove admin globally:`n" err.Message, "V1LN Clan - Admin", "Icon!"
-    }
-}
-
-AddBannedDiscordId(did) {
-    global DISCORD_BAN_FILE
-    did := StrLower(Trim(did))
-    if (did = "" || !RegExMatch(did, "^\d{6,30}$"))
-        return
-    ids := GetLinesFromFile(DISCORD_BAN_FILE)
-    for x in ids
-        if (StrLower(Trim(x)) = did)
-            return
-    ids.Push(did)
-    WriteLinesToFile(DISCORD_BAN_FILE, ids)
-}
-
-RemoveBannedDiscordId(did) {
-    global DISCORD_BAN_FILE
-    did := StrLower(Trim(did))
-    if (did = "")
-        return
-    ids := []
-    for x in GetLinesFromFile(DISCORD_BAN_FILE) {
-        if (StrLower(Trim(x)) != did)
-            ids.Push(x)
-    }
-    WriteLinesToFile(DISCORD_BAN_FILE, ids)
-}
-
-RefreshBannedDiscordLabel(lblCtrl) {
-    global DISCORD_BAN_FILE
-    ids := GetLinesFromFile(DISCORD_BAN_FILE)
-    if (ids.Length = 0) {
-        lblCtrl.Value := "Banned Discord IDs: (none)"
-        return
-    }
-    s := "Banned Discord IDs: "
-    for id in ids
-        s .= id ", "
-    lblCtrl.Value := RTrim(s, ", ")
-}
-
-RefreshBannedFromServer(lblCtrl) {
-    global MANIFEST_URL, DISCORD_BAN_FILE
-    
-    tmp := A_Temp "\manifest_live.json"
-    
-    if !SafeDownload(NoCacheUrl(MANIFEST_URL), tmp, 20000) {
-        lblCtrl.Value := "Banned Discord IDs: (sync failed)"
-        return false
-    }
-    
-    try
-        json := FileRead(tmp, "UTF-8")
-    catch {
-        lblCtrl.Value := "Banned Discord IDs: (sync failed)"
-        return false
-    }
-    
-    lists := ParseManifestLists(json)
-    if !IsObject(lists) {
-        lblCtrl.Value := "Banned Discord IDs: (sync failed)"
-        return false
-    }
-    
-    OverwriteListFile(DISCORD_BAN_FILE, lists.banned)
-    
-    if (lists.banned.Length = 0) {
-        lblCtrl.Value := "Banned Discord IDs: (none)"
-        return true
-    }
-    
-    s := "Banned Discord IDs: "
-    for id in lists.banned
-        s .= id ", "
-    lblCtrl.Value := RTrim(s, ", ")
-    
-    return true
-}
-
-AddAdminDiscordId(did) {
-    global ADMIN_DISCORD_FILE
-    did := StrLower(Trim(did))
-    if (did = "" || !RegExMatch(did, "^\d{6,30}$"))
-        return
-    ids := GetLinesFromFile(ADMIN_DISCORD_FILE)
-    for x in ids
-        if (StrLower(Trim(x)) = did)
-            return
-    ids.Push(did)
-    WriteLinesToFile(ADMIN_DISCORD_FILE, ids)
-}
-
-RemoveAdminDiscordId(did) {
-    global ADMIN_DISCORD_FILE
-    did := StrLower(Trim(did))
-    if (did = "")
-        return
-    ids := []
-    for x in GetLinesFromFile(ADMIN_DISCORD_FILE) {
-        if (StrLower(Trim(x)) != did)
-            ids.Push(x)
-    }
-    WriteLinesToFile(ADMIN_DISCORD_FILE, ids)
-}
-
-RefreshAdminDiscordLabel(lblCtrl) {
-    global ADMIN_DISCORD_FILE
-    ids := GetLinesFromFile(ADMIN_DISCORD_FILE)
-    if (ids.Length = 0) {
-        lblCtrl.Value := "Admin Discord IDs: (none)"
-        return
-    }
-    s := "Admin Discord IDs: "
-    for id in ids
-        s .= id ", "
-    lblCtrl.Value := RTrim(s, ", ")
-}
-
-AddBannedHwid(hwid) {
-    global HWID_BAN_FILE
-    hwid := Trim(hwid)
-    if (hwid = "")
-        return
-    ids := GetLinesFromFile(HWID_BAN_FILE)
-    for x in ids
-        if (Trim(x) = hwid)
-            return
-    ids.Push(hwid)
-    WriteLinesToFile(HWID_BAN_FILE, ids)
-}
-
-RemoveBannedHwid(hwid) {
-    global HWID_BAN_FILE
-    ids := []
-    for x in GetLinesFromFile(HWID_BAN_FILE)
-        if (Trim(x) != Trim(hwid))
-            ids.Push(x)
-    WriteLinesToFile(HWID_BAN_FILE, ids)
-}
-
-IsHwidBanned() {
-    global HWID_BAN_FILE
-    if !FileExist(HWID_BAN_FILE)
-        return false
-    hwid := GetHardwareId()
-    for x in GetLinesFromFile(HWID_BAN_FILE)
-        if (Trim(x) = hwid)
-            return true
-    return false
-}
-
-RefreshBannedHwidLabel(lblCtrl) {
-    global HWID_BAN_FILE
-
-    try ResyncListsFromManifestNow()
-    catch
-
-    ids := GetLinesFromFile(HWID_BAN_FILE)
-    if (ids.Length = 0) {
-        lblCtrl.Value := "Banned HWIDs: (none)"
-        return
-    }
-
-    s := "Banned HWIDs: "
-    for id in ids
-        s .= id ", "
-    lblCtrl.Value := RTrim(s, ", ")
-}
-
-OnBanHwid(hwidEdit, bannedHwidLbl, *) {
-    ; Get the value from the edit control
-    hwidValue := ""
-    try {
-        hwidValue := hwidEdit.Value
-    } catch {
-        MsgBox "Failed to read HWID from edit control.", "V1LN Clan - Admin", "Icon!"
-        return
-    }
-    
-    ; Clean and validate the HWID
-    hwid := Trim(hwidValue)
-    hwid := RegExReplace(hwid, "[^\d]", "")
-    
-    if (hwid = "") {
-        MsgBox "Enter a valid HWID (numbers only).", "V1LN Clan - Admin", "Icon!"
-        return
-    }
-    
-    try {
-        body := '{"hwid":"' JsonEscape(hwid) '"}'
-        resp := WorkerPost("/ban-hwid", body)
-        
-        ; Resync and refresh display
-        try ResyncListsFromManifestNow()
-        catch
-        
-        RefreshBannedHwidLabel(bannedHwidLbl)
-        MsgBox "✅ Globally BANNED HWID: " hwid, "V1LN Clan - Admin", "Iconi"
-    } catch as err {
-        MsgBox "❌ Failed to ban HWID globally:`n" err.Message, "V1LN Clan - Admin", "Icon!"
-    }
-}
-
-OnUnbanHwid(hwidEdit, bannedHwidLbl, *) {
-    ; Get the value from the edit control
-    hwidValue := ""
-    try {
-        hwidValue := hwidEdit.Value
-    } catch {
-        MsgBox "Failed to read HWID from edit control.", "V1LN Clan - Admin", "Icon!"
-        return
-    }
-    
-    ; Clean and validate the HWID
-    hwid := Trim(hwidValue)
-    hwid := RegExReplace(hwid, "[^\d]", "")
-    
-    if (hwid = "") {
-        MsgBox "Enter a valid HWID (numbers only).", "V1LN Clan - Admin", "Icon!"
-        return
-    }
-    
-    try {
-        body := '{"hwid":"' JsonEscape(hwid) '"}'
-        resp := WorkerPost("/unban-hwid", body)
-        
-        ; Resync and refresh display
-        try ResyncListsFromManifestNow()
-        catch
-        
-        RefreshBannedHwidLabel(bannedHwidLbl)
-        MsgBox "✅ Globally UNBANNED HWID: " hwid, "V1LN Clan - Admin", "Iconi"
-    } catch as err {
-        MsgBox "❌ Failed to unban HWID globally:`n" err.Message, "V1LN Clan - Admin", "Icon!"
-    }
-}
-
-GetHardwareId() {
-    hwid := ""
-    
-    ; Get Processor ID
-    try {
-        objWMI := ComObjGet("winmgmts:\\.\root\CIMV2")
-        for proc in objWMI.ExecQuery("SELECT ProcessorId FROM Win32_Processor") {
-            if (proc.ProcessorId != "" && proc.ProcessorId != "None") {
-                hwid .= proc.ProcessorId
-            }
-            break
-        }
-    } catch {
-        ; Silent fail, continue to next method
-    }
-    
-    ; Get Motherboard Serial Number
-    try {
-        objWMI := ComObjGet("winmgmts:\\.\root\CIMV2")
-        for board in objWMI.ExecQuery("SELECT SerialNumber FROM Win32_BaseBoard") {
-            if (board.SerialNumber != "" && board.SerialNumber != "None") {
-                hwid .= board.SerialNumber
-            }
-            break
-        }
-    } catch {
-        ; Silent fail, continue to next method
-    }
-    
-    ; Get BIOS Serial Number
-    try {
-        objWMI := ComObjGet("winmgmts:\\.\root\CIMV2")
-        for bios in objWMI.ExecQuery("SELECT SerialNumber FROM Win32_BIOS") {
-            if (bios.SerialNumber != "" && bios.SerialNumber != "None") {
-                hwid .= bios.SerialNumber
-            }
-            break
-        }
-    } catch {
-        ; Silent fail, continue to next method
-    }
-    
-    ; Get Volume Serial Number (C: drive)
-    try {
-        objWMI := ComObjGet("winmgmts:\\.\root\CIMV2")
-        for disk in objWMI.ExecQuery("SELECT VolumeSerialNumber FROM Win32_LogicalDisk WHERE DeviceID='C:'") {
-            if (disk.VolumeSerialNumber != "" && disk.VolumeSerialNumber != "None") {
-                hwid .= disk.VolumeSerialNumber
-            }
-            break
-        }
-    } catch {
-        ; Silent fail, continue to next method
-    }
-    
-    ; Fallback: Use computer name and username if no hardware info found
-    if (hwid = "") {
-        hwid := A_ComputerName . A_UserName
-    }
-    
-    ; Hash the combined hardware ID to create a unique numeric identifier
-    hash := 0
-    loop parse hwid {
-        hash := Mod(hash * 31 + Ord(A_LoopField), 2147483647)
-    }
-    
-    ; Return as string to ensure compatibility
-    return String(hash)
-}
-
-NoCacheUrl(url) {
-    ; Add cache-busting parameter to prevent browser/system caching
-    separator := InStr(url, "?") ? "&" : "?"
-    return url . separator . "nocache=" . A_TickCount
-}
-
-SendGlobalLoginLog(role, loginUser) {
-    did := Trim(ReadDiscordId())
-    hwid := Trim(GetHardwareId())
-    ts := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
-    pc := A_ComputerName
-    user := A_UserName
-
-    if (did = "" || hwid = "")
-        return
-
-    body := '{"time":"' JsonEscape(ts) '",'
-          . '"discord_id":"' JsonEscape(did) '",'
-          . '"hwid":"' JsonEscape(hwid) '",'
-          . '"pc":"' JsonEscape(pc) '",'
-          . '"user":"' JsonEscape(user) '",'
-          . '"role":"' JsonEscape(role) '",'
-          . '"login_user":"' JsonEscape(loginUser) '"}'
-
-    try {
-        resp := WorkerPostPublic("/log", body)
-    } catch as err {
-        ; Silent fail - logging shouldn't block app
-    }
-}
-
-LoadGlobalSessionLogIntoListView(lv, limit := 200) {
-    lv.Delete()
-
-    resp := ""
-    try {
-        resp := WorkerPost("/logs/get", '{"limit":' limit '}')
-    } catch as err {
-        return
-    }
-
-    if !RegExMatch(resp, '(?s)"logs"\s*:\s*\[(.*)\]\s*}', &m)
-        return
-
-    logsBlock := m[1]
-    pos := 1
-    
-    ; Track unique entries: "discordId|hwid" as key
-    seen := Map()
-
-    while (p := RegExMatch(logsBlock, '(?s)\{.*?\}', &mm, pos)) {
-        one := mm[0]
-        pos := p + StrLen(one)
-
-        t    := JsonExtractAny(one, "t")
-        pc   := JsonExtractAny(one, "pc")
-        did  := JsonExtractAny(one, "discordId")
-        role := JsonExtractAny(one, "role")
-        hwid := JsonExtractAny(one, "hwid")
-        
-        ; Create unique key from discord ID and HWID
-        uniqueKey := did "|" hwid
-        
-        ; Skip if we've already seen this combination
-        if seen.Has(uniqueKey)
-            continue
-        
-        seen[uniqueKey] := true
-        lv.Add("", t, pc, did, role, hwid)
-    }
-    
-    ; Auto-size columns to fit content
-    Loop 5
-        lv.ModifyCol(A_Index, "AutoHdr")
-}
-
-JsonExtractAny(json, key) {
-    ; Handles "key":"value" OR "key":123 OR "key":true
-    pat1 := '(?s)"' key '"\s*:\s*"((?:\\.|[^"\\])*)"'
-    if RegExMatch(json, pat1, &m1) {
-        v := m1[1]
-        v := StrReplace(v, '\"', '"')
-        v := StrReplace(v, "\\n", "`n")
-        v := StrReplace(v, "\\r", "`r")
-        v := StrReplace(v, "\\t", "`t")
-        v := StrReplace(v, "\\", "\")
-        return v
-    }
-
-    pat2 := '(?s)"' key '"\s*:\s*([^,\}\]]+)'
-    if RegExMatch(json, pat2, &m2) {
-        return Trim(m2[1], " `t`r`n")
-    }
-
-    return ""
-}
-
-WorkerPostPublic(endpoint, bodyJson) {
     global WORKER_URL
 
     url := RTrim(WORKER_URL, "/") "/" LTrim(endpoint, "/")
-
     req := ComObject("WinHttp.WinHttpRequest.5.1")
-    
-    ; DO NOT set req.Option[6] - it breaks TLS on many systems
-    ; timeouts: resolve, connect, send, receive (ms)
     req.SetTimeouts(15000, 15000, 15000, 15000)
-
     req.Open("POST", url, false)
     req.SetRequestHeader("Content-Type", "application/json; charset=utf-8")
     req.SetRequestHeader("Accept", "application/json")
-    req.SetRequestHeader("User-Agent", "AHK-Vault")
-
+    req.SetRequestHeader("User-Agent", "v1ln-clan")
     req.Send(bodyJson)
 
     status := 0
@@ -2481,209 +3426,8 @@ WorkerPostPublic(endpoint, bodyJson) {
 
     if (status < 200 || status >= 300)
         throw Error("Worker error " status ": " resp)
-
     return resp
 }
-
-TrackCtrl(win, ctrl) {
-    if !IsObject(ctrl)
-        return ctrl
-    if !win.HasProp("__cards") || !IsObject(win.__cards)
-        win.__cards := []
-    win.__cards.Push(ctrl)
-    return ctrl
-}
-
-AddTracked(win, type, options := "", text := unset) {
-    ctrl := IsSet(text) ? win.Add(type, options, text) : win.Add(type, options)
-
-    ; Don't track scrollbar or mask
-    if win.HasProp("__scrollBar") && IsObject(win.__scrollBar) && ctrl.Hwnd = win.__scrollBar.Hwnd
-        return ctrl
-    if win.HasProp("__mask") && IsObject(win.__mask) && ctrl.Hwnd = win.__mask.Hwnd
-        return ctrl
-
-    return TrackCtrl(win, ctrl)
-}
-
-
-ClearCards(win) {
-    if !win.HasProp("__cards") || !IsObject(win.__cards)
-        win.__cards := []
-
-    Loop win.__cards.Length {
-        i := win.__cards.Length - A_Index + 1
-
-        try {
-            ; Don't delete mask or scrollbar if they ever got tracked
-            if (win.HasProp("__scrollBar") && IsObject(win.__scrollBar) && win.__cards[i].Hwnd = win.__scrollBar.Hwnd)
-                continue
-            if (win.HasProp("__mask") && IsObject(win.__mask) && win.__cards[i].Hwnd = win.__mask.Hwnd)
-                continue
-
-            win.__cards[i].Destroy()
-        }
-    }
-
-    win.__cards := []
-}
-
-
-ReadDiscordId() {
-    global DISCORD_ID_FILE
-    try if FileExist(DISCORD_ID_FILE)
-        return Trim(FileRead(DISCORD_ID_FILE, "UTF-8"))
-    return ""
-
-}
-TestWebhookPromptAndSend() {
-    global TEST_WEBHOOK_URL
-
-    ib := InputBox(
-        "Paste a Discord webhook URL to test sending pings + message.",
-        "Webhook Test",
-        "w600 h170"
-    )
-    if (ib.Result != "OK")
-        return
-
-    TEST_WEBHOOK_URL := Trim(ib.Value)
-    if (TEST_WEBHOOK_URL = "" || !InStr(TEST_WEBHOOK_URL, "https://")) {
-        MsgBox "Invalid webhook URL.", "Error", "Icon!"
-        return
-    }
-
-    ; Send a test message with pings
-    SendDiscordLogin_Test(TEST_WEBHOOK_URL)
-    MsgBox "Test sent (check your Discord channel).", "Webhook Test", "Iconi"
-}
-
-SendDiscordLogin_Test(customWebhookUrl) {
-    ownerId := "898236174039138304"   ; your owner ping
-    did := RegExReplace(Trim(ReadDiscordId()), "[^\d]", "")  ; logged-in user's discord id (clean digits)
-    ts := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
-
-    header := "<@" ownerId ">`n"
-    header .= (did != "" ? "Login detected by <@" did ">" : "Login detected (Discord ID missing)")
-    header .= "`n`n"
-
-    ; Example message in your style (matches what you showed)
-    msg := header
-        . "👤 V1LN Clan - User Startup (Non-Admin)`n`n"
-        . "Time: " ts "`n"
-        . "PC: " A_ComputerName "`n"
-        . "User: " A_UserName "`n"
-        . "Discord ID: " (did != "" ? did : "(empty)") "`n"
-        . "HWID: " GetHardwareId()
-
-    ; Allowed mentions so pings WORK
-    usersJson := (did != "")
-        ? '["' ownerId '","' did '"]'
-        : '["' ownerId '"]'
-
-    payload := '{'
-        . '"content":"' JsonEscapeForDiscord(msg) '",'
-        . '"allowed_mentions":{"parse":[],"users":' usersJson '}'
-        . '}'
-
-    DiscordWebhookPostJSON(customWebhookUrl, payload)
-}
-
-DiscordWebhookPostJSON(webhookUrl, jsonBody) {
-    req := ComObject("WinHttp.WinHttpRequest.5.1")
-    req.Open("POST", webhookUrl, false)
-    req.SetRequestHeader("Content-Type", "application/json")
-    req.Send(jsonBody)
-
-    ; Optional: uncomment to debug HTTP errors
-    ; if (req.Status < 200 || req.Status >= 300)
-    ;     MsgBox "Webhook failed (" req.Status "):`n" req.ResponseText, "Webhook Error", "Icon!"
-}
-
-JsonEscapeForDiscord(s) {
-    s := StrReplace(s, "\", "\\")
-    s := StrReplace(s, '"', '\"')
-    s := StrReplace(s, "`r", "")
-    s := StrReplace(s, "`n", "\n")
-    s := StrReplace(s, "`t", "\t")
-    return s
-}
-SetupScrollRange(win, contentTop, contentBottom) {
-    viewTop := win.__viewTop
-    viewBottom := win.__viewBottom
-    visibleH := viewBottom - viewTop
-
-    contentH := Max(0, contentBottom - contentTop)
-    maxScroll := Max(0, contentH - visibleH)
-
-    ; Configure scrollbar
-    try win.__scrollBar.Opt("Range0-" maxScroll)
-
-    ; Clamp value
-    if (win.__scrollBar.Value > maxScroll)
-        win.__scrollBar.Value := maxScroll
-    if (win.__scrollBar.Value < 0)
-        win.__scrollBar.Value := 0
-
-    ; Capture controls that should move
-    win.__scrollItems := []
-    for ctrl in win {
-        try {
-            ; skip header + skip scrollbar
-            ctrl.GetPos(&x, &y, &w, &h)
-
-            if (ctrl.Hwnd = win.__scrollBar.Hwnd)
-                continue
-
-            if (y >= win.__contentTop) {
-                win.__scrollItems.Push({ ctrl: ctrl, x: x, y: y, w: w, h: h })
-            }
-        }
-    }
-}
-
-ApplyCardScroll(win) {
-    if !win.HasProp("__scrollItems") || !IsObject(win.__scrollItems)
-        return
-    if !win.HasProp("__scrollBar") || !IsObject(win.__scrollBar)
-        return
-
-    offset := -win.__scrollBar.Value
-    viewTop := win.__viewTop
-    viewBottom := win.__viewBottom
-
-    try DllCall("user32\LockWindowUpdate", "ptr", win.Hwnd)
-
-    for it in win.__scrollItems {
-        try {
-            newY := it.y + offset
-
-            ; Hide if outside viewport (prevents header overlap)
-            if (newY + it.h <= viewTop || newY >= viewBottom) {
-                it.ctrl.Visible := false
-                continue
-            } else {
-                it.ctrl.Visible := true
-            }
-
-            it.ctrl.Move(it.x, newY, it.w, it.h)
-        }
-    }
-
-    try DllCall("user32\LockWindowUpdate", "ptr", 0)
-
-    try DllCall("user32\RedrawWindow"
-        , "ptr", win.Hwnd
-        , "ptr", 0
-        , "ptr", 0
-        , "uint", 0x0001 | 0x0004 | 0x0080 | 0x0100)
-
-    ; keep mask above everything
-    if win.HasProp("__mask") && IsObject(win.__mask) {
-        try win.__mask.Move(0, 90, 750, 25)
-    }
-}
-
 
 MakeUtilityClickHandler(path, name) {
     return (*) => RunUtilityButton(path, name)
@@ -2845,725 +3589,292 @@ RunUtilityButton(path, name) {
         
         Run '"' A_AhkPath '" "' path '"', dir
         
-        SetTimer () => ToolTip(), -1500
     } catch as err {
-        ToolTip
-        MsgBox "Failed to run utility: " err.Message "`n`nPath: " path "`n`nWorking Dir: " dir, "Error", "Icon!"
+
     }
 }
 
-; ========== FAVORITES SYSTEM ==========
 
-global favorites := Map()
-global FAVORITES_FILE := ""
+; ========== ENHANCED FEATURES: PROFILE MANAGEMENT (NEW!) ==========
 
-LoadFavorites() {
-    global favorites, FAVORITES_FILE
+LoadUserProfile() {
+    global WORKER_URL, DISCORD_ID_FILE, USER_PROFILE, PROFILE_ENABLED
     
-    if !FileExist(FAVORITES_FILE) {
-        favorites := Map()
-        return
-    }
+    if !PROFILE_ENABLED
+        return false
+    
+    discordId := ReadDiscordId()
+    if (discordId = "" || discordId = "Unknown")
+        return false
     
     try {
-        json := FileRead(FAVORITES_FILE, "UTF-8")
-        parsed := ParseFavoritesJSON(json)
-        if parsed
-            favorites := parsed
-        else
-            favorites := Map()
-    } catch {
-        favorites := Map()
-    }
-}
-
-SaveFavorites() {
-    global favorites, FAVORITES_FILE
-    
-    try {
-        json := FavoritesToJSON(favorites)
-        if FileExist(FAVORITES_FILE)
-            FileDelete FAVORITES_FILE
-        FileAppend json, FAVORITES_FILE, "UTF-8"
-    } catch {
-    }
-}
-
-GetMacroKey(macroPath) {
-    try {
-        SplitPath macroPath, , &macroDir
-        SplitPath macroDir, &folderName, &parentDir
-        SplitPath parentDir, &categoryName
-        
-        key := categoryName "_" folderName
-        key := StrReplace(key, " ", "_")
-        key := StrReplace(key, "\", "_")
-        key := StrReplace(key, ":", "")
-        key := StrReplace(key, "/", "_")
-        key := RegExReplace(key, "[^a-zA-Z0-9_-]", "")
-        
-        return key
-    } catch {
-        key := StrReplace(StrReplace(macroPath, "\", "_"), ":", "")
-        return RegExReplace(key, "[^a-zA-Z0-9_-]", "")
-    }
-}
-
-ToggleFavorite(macroPath) {
-    global favorites
-    key := GetMacroKey(macroPath)
-    
-    if favorites.Has(key)
-        favorites.Delete(key)
-    else
-        favorites[key] := {
-            path: macroPath,
-            addedAt: A_Now
-        }
-    
-    SaveFavorites()
-}
-
-IsFavorite(macroPath) {
-    global favorites
-    key := GetMacroKey(macroPath)
-    return favorites.Has(key)
-}
-
-FavoritesToJSON(favMap) {
-    if favMap.Count = 0
-        return "{}"
-    
-    pairs := []
-    for key, data in favMap {
-        keyStr := EscapeJSON(key)
-        path := EscapeJSON(data.path)
-        addedAt := EscapeJSON(data.addedAt)
-        
-        pairs.Push('"' keyStr '":{"path":"' path '","addedAt":"' addedAt '"}')
-    }
-    
-    return "{" StrJoin(pairs, ",") "}"
-}
-
-ParseFavoritesJSON(json) {
-    result := Map()
-    
-    if !json || json = "{}"
-        return result
-    
-    try {
-        content := Trim(SubStr(json, 2, StrLen(json) - 2))
-        entries := SplitTopLevel(content)
-        
-        for entry in entries {
-            if !InStr(entry, ":")
-                continue
-            
-            if !RegExMatch(entry, '"([^"]+)":\s*{', &m)
-                continue
-            
-            key := m[1]
-            path := ""
-            addedAt := ""
-            
-            if RegExMatch(entry, '"path"\s*:\s*"([^"]+)"', &m2)
-                path := UnescapeJSON(m2[1])
-            
-            if RegExMatch(entry, '"addedAt"\s*:\s*"([^"]+)"', &m3)
-                addedAt := m3[1]
-            
-            if path != ""
-                result[key] := {
-                    path: path,
-                    addedAt: addedAt
-                }
-        }
-    } catch {
-        return Map()
-    }
-    
-    return result
-}
-
-; ========== CATEGORY VIEW WITH PAGINATION ==========
-
-OpenCategory(category, sortBy := "favorites", page := 1) {
-    global COLORS, BASE_DIR
-    
-    macros := GetMacrosWithInfo(category, sortBy)
-    
-    if (macros.Length = 0) {
-        MsgBox "No macros found in '" category "'", "No Macros", "Iconi"
-        return
-    }
-    
-    win := Gui("-Resize +Border", category " - Macros")
-    win.BackColor := COLORS.bg
-    win.SetFont("s10", "Segoe UI")
-    
-    win.__data := macros
-    win.__cards := []
-    win.__currentPage := page
-    win.__itemsPerPage := 8
-    win.__sortBy := sortBy
-    win.__category := category
-    
-    win.Add("Text", "x0 y0 w750 h90 Background" COLORS.accent)
-    
-    backBtn := win.Add("Button", "x20 y25 w70 h35 Background" COLORS.accentHover, "← Back")
-    backBtn.SetFont("s10")
-    backBtn.OnEvent("Click", (*) => win.Destroy())
-    
-    title := win.Add("Text", "x105 y20 w400 h100 c" COLORS.text " BackgroundTrans", category)
-    title.SetFont("s22 bold")
-    
-    sortLabel := win.Add("Text", "x530 y25 w60 c" COLORS.text " BackgroundTrans", "Sort by:")
-    sortLabel.SetFont("s9")
-    
-    sortDDL := win.Add("DropDownList", "x530 y45 w200 Background" COLORS.card " c" COLORS.text, 
-        ["⭐ Favorites First", "🔤 Name (A-Z)", "🔤 Name (Z-A)", "📊 Most Used", "📊 Least Used", "📅 Recently Added"])
-    sortDDL.SetFont("s9")
-    
-    sortIndexMap := Map(
-        "favorites", 1,
-        "name_asc", 2,
-        "name_desc", 3,
-        "runs_desc", 4,
-        "runs_asc", 5,
-        "recent", 6
-    )
-    sortDDL.Choose(sortIndexMap.Has(sortBy) ? sortIndexMap[sortBy] : 1)
-    sortDDL.OnEvent("Change", (*) => ChangeSortAndRefresh(win, sortDDL.Text, category))
-    
-    win.__scrollY := 110
-    
-    RenderCards(win)
-    win.Show("w750 h640 Center")
-}
-
-ChangeSortAndRefresh(win, sortText, category) {
-    sortMap := Map(
-        "⭐ Favorites First", "favorites",
-        "🔤 Name (A-Z)", "name_asc",
-        "🔤 Name (Z-A)", "name_desc",
-        "📊 Most Used", "runs_desc",
-        "📊 Least Used", "runs_asc",
-        "📅 Recently Added", "recent"
-    )
-    
-    sortBy := sortMap.Has(sortText) ? sortMap[sortText] : "favorites"
-    
-    win.Destroy()
-    Sleep 100
-    OpenCategory(category, sortBy, 1)
-}
-
-ChangePage(win, direction) {
-    category := win.__category
-    sortBy := win.__sortBy
-    newPage := win.__currentPage + direction
-    
-    totalPages := Ceil(win.__data.Length / win.__itemsPerPage)
-    
-    if (newPage < 1)
-        newPage := 1
-    if (newPage > totalPages)
-        newPage := totalPages
-    
-    win.Destroy()
-    Sleep 100
-    OpenCategory(category, sortBy, newPage)
-}
-
-RenderCards(win) {
-    global COLORS
-    
-    if !win.HasProp("__data")
-        return
-    
-    if win.HasProp("__cards") && win.__cards.Length > 0 {
-        for ctrl in win.__cards {
-            try ctrl.Destroy()
-            catch {
-            }
-        }
-    }
-    win.__cards := []
-    
-    macros := win.__data
-    scrollY := win.__scrollY
-    
-    if (macros.Length = 0) {
-        noResult := win.Add("Text", "x25 y" scrollY " w700 h100 c" COLORS.textDim " Center", "No macros found")
-        noResult.SetFont("s10")
-        win.__cards.Push(noResult)
-        return
-    }
-    
-    itemsPerPage := win.__itemsPerPage
-    currentPage := win.__currentPage
-    totalPages := Ceil(macros.Length / itemsPerPage)
-    
-    if (currentPage > totalPages) {
-        currentPage := totalPages
-        win.__currentPage := currentPage
-    }
-    
-    startIdx := ((currentPage - 1) * itemsPerPage) + 1
-    endIdx := Min(currentPage * itemsPerPage, macros.Length)
-    itemsToShow := endIdx - startIdx + 1
-    
-    if (itemsToShow = 1) {
-        item := macros[startIdx]
-        CreateFullWidthCard(win, item, 25, scrollY, 700, 110)
-    } else {
-        cardWidth := 340
-        cardHeight := 110
-        spacing := 10
-        
-        Loop itemsToShow {
-            idx := startIdx + A_Index - 1
-            item := macros[idx]
-            
-            col := Mod(A_Index - 1, 2)
-            row := Floor((A_Index - 1) / 2)
-            
-            xPos := 25 + (col * (cardWidth + spacing))
-            yPos := scrollY + (row * (cardHeight + spacing))
-            
-            CreateGridCard(win, item, xPos, yPos, cardWidth, cardHeight)
-        }
-    }
-    
-    if (macros.Length > itemsPerPage) {
-        paginationY := scrollY + 470
-        
-        pageInfo := win.Add("Text", "x25 y" paginationY " w300 c" COLORS.textDim, 
-            "Page " currentPage " of " totalPages " (" macros.Length " total)")
-        pageInfo.SetFont("s9")
-        win.__cards.Push(pageInfo)
-        
-        if (currentPage > 1) {
-            prevBtn := win.Add("Button", "x335 y" (paginationY - 5) " w90 h35 Background" COLORS.accentHover, "← Previous")
-            prevBtn.SetFont("s9")
-            prevBtn.OnEvent("Click", (*) => ChangePage(win, -1))
-            win.__cards.Push(prevBtn)
-        }
-        
-        if (currentPage < totalPages) {
-            nextBtn := win.Add("Button", "x635 y" (paginationY + 10) " w90 h35 Background" COLORS.accentHover, "Next →")
-            nextBtn.SetFont("s9")
-            nextBtn.OnEvent("Click", (*) => ChangePage(win, 1))
-            win.__cards.Push(nextBtn)
-        }
-    }
-}
-
-; ========== CARD CREATION ==========
-
-CreateFullWidthCard(win, item, x, y, w, h) {
-    global COLORS
-    
-    card := win.Add("Text", "x" x " y" y " w" w " h" h " Background" COLORS.card)
-    win.__cards.Push(card)
-    
-    iconPath := GetMacroIcon(item.path)
-    hasIcon := false
-    
-    if (iconPath && FileExist(iconPath)) {
-        try {
-            pic := win.Add("Picture", "x" (x + 20) " y" (y + 15) " w80 h80 BackgroundTrans", iconPath)
-            win.__cards.Push(pic)
-            hasIcon := true
-        } catch {
-        }
-    }
-    
-    if (!hasIcon) {
-        initial := SubStr(item.info.Title, 1, 1)
-        iconColor := GetCategoryColor(item.info.Title)
-        badge := win.Add("Text", "x" (x + 20) " y" (y + 15) " w80 h80 Background" iconColor " Center", initial)
-        badge.SetFont("s32 bold c" COLORS.text)
-        win.__cards.Push(badge)
-    }
-    
-    titleCtrl := win.Add("Text", "x" (x + 120) " y" (y + 20) " w340 c" COLORS.text " BackgroundTrans", item.info.Title)
-    titleCtrl.SetFont("s13 bold")
-    win.__cards.Push(titleCtrl)
-    
-    creatorCtrl := win.Add("Text", "x" (x + 120) " y" (y + 50) " w340 c" COLORS.textDim " BackgroundTrans", "by " item.info.Creator)
-    creatorCtrl.SetFont("s10")
-    win.__cards.Push(creatorCtrl)
-    
-    versionCtrl := win.Add("Text", "x" (x + 120) " y" (y + 75) " w60 h22 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
-    versionCtrl.SetFont("s9 bold")
-    win.__cards.Push(versionCtrl)
-    
-    runCount := GetRunCount(item.path)
-    if (runCount > 0) {
-        runCountCtrl := win.Add("Text", "x" (x + 190) " y" (y + 75) " w100 h22 c" COLORS.textDim " BackgroundTrans", "Runs: " runCount)
-        runCountCtrl.SetFont("s9")
-        win.__cards.Push(runCountCtrl)
-    }
-    
-    currentPath := item.path
-    isFav := IsFavorite(currentPath)
-    favBtn := win.Add("Button", "x" (x + w - 145) " y" (y + 20) " w35 h35 Center Background" (isFav ? COLORS.favorite : COLORS.cardHover), isFav ? "★" : "✰")
-    favBtn.SetFont("s18", "Segoe UI Symbol")
-    favBtn.OnEvent("Click", (*) => ToggleFavoriteAndRefresh(win, currentPath))
-    win.__cards.Push(favBtn)
-    
-    runBtn := win.Add("Button", "x" (x + w - 100) " y" (y + 20) " w90 h35 Background" COLORS.success, "▶ Run")
-    runBtn.SetFont("s11 bold")
-    runBtn.OnEvent("Click", (*) => RunMacro(currentPath))
-    win.__cards.Push(runBtn)
-    
-    if (Trim(item.info.Links) != "") {
-        currentLinks := item.info.Links
-        linksBtn := win.Add("Button", "x" (x + w - 100) " y" (y + 65) " w90 h30 Background" COLORS.accentAlt, "🔗 Links")
-        linksBtn.SetFont("s10")
-        linksBtn.OnEvent("Click", (*) => OpenLinks(currentLinks))
-        win.__cards.Push(linksBtn)
-    }
-}
-
-CreateGridCard(win, item, x, y, w, h) {
-    global COLORS
-    
-    card := win.Add("Text", "x" x " y" y " w" w " h" h " Background" COLORS.card)
-    win.__cards.Push(card)
-    
-    iconPath := GetMacroIcon(item.path)
-    hasIcon := false
-    
-    if (iconPath && FileExist(iconPath)) {
-        try {
-            pic := win.Add("Picture", "x" (x + 15) " y" (y + 15) " w60 h60 BackgroundTrans", iconPath)
-            win.__cards.Push(pic)
-            hasIcon := true
-        } catch {
-        }
-    }
-    
-    if (!hasIcon) {
-        initial := SubStr(item.info.Title, 1, 1)
-        iconColor := GetCategoryColor(item.info.Title)
-        badge := win.Add("Text", "x" (x + 15) " y" (y + 15) " w60 h60 Background" iconColor " Center", initial)
-        badge.SetFont("s24 bold c" COLORS.text)
-        win.__cards.Push(badge)
-    }
-    
-    titleCtrl := win.Add("Text", "x" (x + 90) " y" (y + 15) " w" (w - 190) " h30 c" COLORS.text " BackgroundTrans", item.info.Title)
-    titleCtrl.SetFont("s11 bold")
-    win.__cards.Push(titleCtrl)
-    
-    creatorCtrl := win.Add("Text", "x" (x + 90) " y" (y + 40) " w" (w - 190) " c" COLORS.textDim " BackgroundTrans", "by " item.info.Creator)
-    creatorCtrl.SetFont("s9")
-    win.__cards.Push(creatorCtrl)
-    
-    versionCtrl := win.Add("Text", "x" (x + 90) " y" (y + 63) " w50 h18 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
-    versionCtrl.SetFont("s8 bold")
-    win.__cards.Push(versionCtrl)
-    
-    runCount := GetRunCount(item.path)
-    if (runCount > 0) {
-        runCountCtrl := win.Add("Text", "x" (x + 150) " y" (y + 63) " w80 h18 c" COLORS.textDim " BackgroundTrans", "Runs: " runCount)
-        runCountCtrl.SetFont("s8")
-        win.__cards.Push(runCountCtrl)
-    }
-    
-    currentPath := item.path
-    isFav := IsFavorite(currentPath)
-    favBtn := win.Add("Button", "x" (x + w - 110) " y" (y + 20) " w20 h20 Center Background" (isFav ? COLORS.favorite : COLORS.cardHover), isFav ? "★" : "✰")
-    favBtn.SetFont("s11", "Segoe UI Symbol")
-    favBtn.OnEvent("Click", (*) => ToggleFavoriteAndRefresh(win, currentPath))
-    win.__cards.Push(favBtn)
-    
-    runBtn := win.Add("Button", "x" (x + w - 90) " y" (y + 15) " w80 h30 Background" COLORS.success, "▶ Run")
-    runBtn.SetFont("s10 bold")
-    runBtn.OnEvent("Click", (*) => RunMacro(currentPath))
-    win.__cards.Push(runBtn)
-    
-    if (Trim(item.info.Links) != "") {
-        currentLinks := item.info.Links
-        linksBtn := win.Add("Button", "x" (x + w - 90) " y" (y + 50) " w80 h22 Background" COLORS.card, "🔗 Links")
-        linksBtn.SetFont("s8")
-        linksBtn.OnEvent("Click", (*) => OpenLinks(currentLinks))
-        win.__cards.Push(linksBtn)
-    }
-}
-
-ToggleFavoriteAndRefresh(win, macroPath) {
-    ToggleFavorite(macroPath)
-    
-    category := win.__category
-    sortBy := win.__sortBy
-    currentPage := win.__currentPage
-    
-    win.Destroy()
-    Sleep 100
-    OpenCategory(category, sortBy, currentPage)
-}
-
-; ========== SORTING FUNCTIONS ==========
-
-SortByFavorites(macros) {
-    favs := []
-    nonFavs := []
-    
-    for item in macros {
-        if IsFavorite(item.path)
-            favs.Push(item)
-        else
-            nonFavs.Push(item)
-    }
-    
-    sorted := []
-    for item in favs
-        sorted.Push(item)
-    for item in nonFavs
-        sorted.Push(item)
-    
-    return sorted
-}
-
-SortByName(macros, ascending := true) {
-    if (macros.Length <= 1)
-        return macros
-    
-    sorted := macros.Clone()
-    
-    Loop sorted.Length - 1 {
-        i := A_Index
-        Loop sorted.Length - i {
-            j := A_Index + i
-            
-            titleI := sorted[i].info.Title
-            titleJ := sorted[j].info.Title
-            
-            comparison := StrCompare(StrLower(titleI), StrLower(titleJ))
-            
-            if ascending {
-                if (comparison > 0) {
-                    temp := sorted[i]
-                    sorted[i] := sorted[j]
-                    sorted[j] := temp
-                }
-            } else {
-                if (comparison < 0) {
-                    temp := sorted[i]
-                    sorted[i] := sorted[j]
-                    sorted[j] := temp
-                }
-            }
-        }
-    }
-    
-    return sorted
-}
-
-SortByRuns(macros, ascending := true) {
-    if (macros.Length <= 1)
-        return macros
-    
-    sorted := macros.Clone()
-    
-    Loop sorted.Length - 1 {
-        i := A_Index
-        Loop sorted.Length - i {
-            j := A_Index + i
-            
-            runI := GetRunCount(sorted[i].path)
-            runJ := GetRunCount(sorted[j].path)
-            
-            if ascending {
-                if (runI > runJ) {
-                    temp := sorted[i]
-                    sorted[i] := sorted[j]
-                    sorted[j] := temp
-                }
-            } else {
-                if (runI < runJ) {
-                    temp := sorted[i]
-                    sorted[i] := sorted[j]
-                    sorted[j] := temp
-                }
-            }
-        }
-    }
-    
-    return sorted
-}
-
-SortByRecent(macros) {
-    global favorites
-    sorted := macros.Clone()
-    
-    Loop sorted.Length - 1 {
-        i := A_Index
-        Loop sorted.Length - i {
-            j := A_Index + i
-            
-            keyI := GetMacroKey(sorted[i].path)
-            keyJ := GetMacroKey(sorted[j].path)
-            
-            timeI := favorites.Has(keyI) ? favorites[keyI].addedAt : "0"
-            timeJ := favorites.Has(keyJ) ? favorites[keyJ].addedAt : "0"
-            
-            if (timeI < timeJ) {
-                temp := sorted[i]
-                sorted[i] := sorted[j]
-                sorted[j] := temp
-            }
-        }
-    }
-    
-    return sorted
-}
-
-; ========== HELPER FUNCTIONS ==========
-
-EscapeJSON(s) {
-    s := StrReplace(s, "\", "\\")
-    s := StrReplace(s, '"', '\"')
-    s := StrReplace(s, "`r", "")
-    s := StrReplace(s, "`n", "\n")
-    s := StrReplace(s, "`t", "\t")
-    return s
-}
-
-UnescapeJSON(str) {
-    str := StrReplace(str, "\\", "\")
-    str := StrReplace(str, '\"', '"')
-    str := StrReplace(str, "\n", "`n")
-    str := StrReplace(str, "\r", "`r")
-    str := StrReplace(str, "\t", "`t")
-    return str
-}
-
-StrJoin(arr, delim) {
-    result := ""
-    for item in arr {
-        if (result != "")
-            result .= delim
-        result .= item
-    }
-    return result
-}
-
-
-SplitTopLevel(str) {
-    result := []
-    depth := 0
-    current := ""
-    
-    Loop Parse, str {
-        char := A_LoopField
-        
-        if (char = "{")
-            depth++
-        else if (char = "}")
-            depth--
-        
-        if (char = "," && depth = 0) {
-            if (Trim(current) != "")
-                result.Push(Trim(current))
-            current := ""
-        } else {
-            current .= char
-        }
-    }
-    
-    if (Trim(current) != "")
-        result.Push(Trim(current))
-    
-    return result
-}
-
-; =============== PANIC MODE DETECTION & SELF-DESTRUCT ===============
-
-CheckPanicMode() {
-    global WORKER_URL
-    
-    try {
-        url := WORKER_URL "panic-status"
         req := ComObject("WinHttp.WinHttpRequest.5.1")
-        req.Open("GET", url, false)
-        req.SetRequestHeader("Cache-Control", "no-cache")
+        req.SetTimeouts(5000, 5000, 5000, 5000)
+        req.Open("GET", WORKER_URL "/profile/" discordId, false)
         req.Send()
         
         if (req.Status = 200) {
-            response := req.ResponseText
+            resp := req.ResponseText
             
-            ; Parse JSON manually
-            if InStr(response, '"panic":true') or InStr(response, '"panic": true') {
-                ; PANIC MODE IS ACTIVE - SELF DESTRUCT
-                ExecuteSelfDestruct()
-                return true
-            }
+            if RegExMatch(resp, '"username"\s*:\s*"([^"]+)"', &m)
+                USER_PROFILE["username"] := m[1]
+            if RegExMatch(resp, '"bio"\s*:\s*"([^"]+)"', &m)
+                USER_PROFILE["bio"] := m[1]
+            if RegExMatch(resp, '"total_macros_run"\s*:\s*(\d+)', &m)
+                USER_PROFILE["total_macros"] := m[1]
+            if RegExMatch(resp, '"profile_picture"\s*:\s*"([^"]+)"', &m)
+                USER_PROFILE["picture"] := m[1]
+            
+            return true
         }
-    } catch as err {
-        ; If we can't reach the server, assume no panic (to avoid false positives)
+    } catch {
+        return false
     }
     
     return false
 }
 
-ExecuteSelfDestruct() {
-    global APP_DIR, SECURE_VAULT, BASE_DIR, ICON_DIR
-    global VERSION_FILE, STATS_FILE, FAVORITES_FILE
-    global DISCORD_ID_FILE, DISCORD_BAN_FILE, ADMIN_DISCORD_FILE
-    global HWID_BAN_FILE
+ShowUserHistory() {
+    global WORKER_URL, DISCORD_ID_FILE, COLORS
     
-    ; Kill all running AHK scripts
-    try {
-        Run 'taskkill /F /IM AutoHotkey64.exe', , "Hide"
-        Run 'taskkill /F /IM AutoHotkey32.exe', , "Hide"
-    }
-    
-    ; Delete all macro-related directories
-    try {
-        if DirExist(BASE_DIR)
-            DirDelete BASE_DIR, true
+    discordId := ReadDiscordId()
+    if (discordId = "" || discordId = "Unknown") {
+        MsgBox "Discord ID not found!", "Error"
+        return
     }
     
     try {
-        if DirExist(ICON_DIR)
-            DirDelete ICON_DIR, true
+        ToolTip "Loading history..."
+        
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(10000, 10000, 10000, 10000)
+        req.Open("GET", WORKER_URL "/profile/history/" discordId, false)
+        req.Send()
+        
+        ToolTip
+        
+        if (req.Status != 200) {
+            MsgBox "Failed to load history!", "Error"
+            return
+        }
+        
+        resp := req.ResponseText
+        
+        total := 0
+        if RegExMatch(resp, '"total"\s*:\s*(\d+)', &m)
+            total := m[1]
+        
+        historyGui := Gui(, "My Macro History")
+        historyGui.BackColor := COLORS.bg
+        historyGui.SetFont("s10 c" COLORS.text, "Segoe UI")
+        
+        historyGui.Add("Text", "x0 y0 w700 h60 Background" COLORS.accent)
+        historyGui.Add("Text", "x20 y15 w660 h30 c" COLORS.text " BackgroundTrans", "📊 My Macro History").SetFont("s16 bold")
+        
+        historyGui.Add("Text", "x20 y70 w660 c" COLORS.text, "Total Macros Run: " total)
+        
+        lv := historyGui.Add("ListView", "x20 y100 w660 h400 Background" COLORS.card " c" COLORS.text,
+            ["Macro Name", "Category", "Date", "Duration"])
+        lv.ModifyCol(1, 250)
+        lv.ModifyCol(2, 150)
+        lv.ModifyCol(3, 150)
+        lv.ModifyCol(4, 100)
+        
+        pos := 1
+        while (pos := RegExMatch(resp, '\{[^}]*"macro_name"[^}]*\}', &match, pos)) {
+            eventObj := match[0]
+            
+            macroName := ""
+            category := ""
+            timestamp := ""
+            duration := ""
+            
+            if RegExMatch(eventObj, '"macro_name"\s*:\s*"([^"]+)"', &m)
+                macroName := m[1]
+            if RegExMatch(eventObj, '"category"\s*:\s*"([^"]+)"', &m)
+                category := m[1]
+            if RegExMatch(eventObj, '"timestamp"\s*:\s*(\d+)', &m)
+                timestamp := m[1]
+            if RegExMatch(eventObj, '"duration"\s*:\s*(\d+)', &m)
+                duration := m[1]
+            
+            dateStr := FormatTimestampUtil(timestamp)
+            durationStr := FormatDurationUtil(duration)
+            
+            lv.Add(, macroName, category, dateStr, durationStr)
+            
+            pos += StrLen(match[0]) + match.Pos
+        }
+        
+        lv.ModifyCol()
+        
+        closeBtn := historyGui.Add("Button", "x20 y510 w660 h40 Background" COLORS.accent, "Close")
+        closeBtn.SetFont("s11 bold")
+        closeBtn.OnEvent("Click", (*) => historyGui.Destroy())
+        
+        historyGui.Show("w700 h570")
+        
+    } catch as err {
+        ToolTip
+        MsgBox "Error loading history: " err.Message, "Error"
     }
-    
-    try {
-        if DirExist(SECURE_VAULT)
-            DirDelete SECURE_VAULT, true
-    }
-    
-    try {
-        if DirExist(APP_DIR)
-            DirDelete APP_DIR, true
-    }
-    
-    ; Delete current script
-    try {
-        scriptPath := A_ScriptFullPath
-        cmd := 'cmd /c timeout /t 2 /nobreak && del /F /Q "' scriptPath '"'
-        Run cmd, , "Hide"
-    }
-    
-    ; Clear registry entries
-    try {
-        RegDelete "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\SessionInfo", "MachineGUID"
-    }
-    
-    ; Exit immediately
-    ExitApp
 }
 
-StartPanicWatchdog() {
-    ; Initial check
-    if CheckPanicMode()
-        return
+ShowPopularMacros() {
+    global WORKER_URL, COLORS
     
-    ; Set timer for periodic checks (every 30 seconds)
-    SetTimer CheckPanicMode, 30000
+    try {
+        ToolTip "Loading popular macros..."
+        
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(10000, 10000, 10000, 10000)
+        req.Open("GET", WORKER_URL "/analytics/popular?timeframe=week&limit=20", false)
+        req.Send()
+        
+        ToolTip
+        
+        if (req.Status != 200) {
+            MsgBox "Failed to load popular macros!", "Error"
+            return
+        }
+        
+        resp := req.ResponseText
+        
+        popGui := Gui(, "Popular Macros This Week")
+        popGui.BackColor := COLORS.bg
+        popGui.SetFont("s10 c" COLORS.text, "Segoe UI")
+        
+        popGui.Add("Text", "x0 y0 w600 h60 Background" COLORS.accent)
+        popGui.Add("Text", "x20 y15 w560 h30 c" COLORS.text " BackgroundTrans", "🏆 Popular Macros").SetFont("s16 bold")
+        
+        lv := popGui.Add("ListView", "x20 y70 w560 h400 Background" COLORS.card " c" COLORS.text,
+            ["Rank", "Macro ID", "Usage Count"])
+        lv.ModifyCol(1, 80)
+        lv.ModifyCol(2, 350)
+        lv.ModifyCol(3, 120)
+        
+        rank := 1
+        pos := 1
+        while (pos := RegExMatch(resp, '"macro_id"\s*:\s*"([^"]+)"[^}]*"count"\s*:\s*(\d+)', &m, pos)) {
+            lv.Add(, rank, m[1], m[2])
+            rank++
+            pos += StrLen(m[0])
+        }
+        
+        lv.ModifyCol()
+        
+        closeBtn := popGui.Add("Button", "x20 y480 w560 h40 Background" COLORS.accent, "Close")
+        closeBtn.SetFont("s11 bold")
+        closeBtn.OnEvent("Click", (*) => popGui.Destroy())
+        
+        popGui.Show("w600 h540")
+        
+    } catch as err {
+        ToolTip
+        MsgBox "Error loading popular macros: " err.Message, "Error"
+    }
+}
+
+; ========== ANALYTICS TRACKING (NEW!) ==========
+
+TrackMacroUsage(macroId, macroName, category := "Uncategorized", duration := 0) {
+    global WORKER_URL, SESSION_TOKEN_FILE, ANALYTICS_ENABLED
+    
+    if !ANALYTICS_ENABLED
+        return false
+    
+    if !FileExist(SESSION_TOKEN_FILE)
+        return false
+    
+    try {
+        sessionToken := Trim(FileRead(SESSION_TOKEN_FILE))
+        
+        body := '{"session_token":"' JsonEscape(sessionToken) '",'
+              . '"macro_id":"' JsonEscape(macroId) '",'
+              . '"macro_name":"' JsonEscape(macroName) '",'
+              . '"category":"' JsonEscape(category) '",'
+              . '"duration":' duration '}'
+        
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(5000, 5000, 5000, 5000)
+        req.Open("POST", WORKER_URL "/analytics/track", false)
+        req.SetRequestHeader("Content-Type", "application/json")
+        req.Send(body)
+        
+        return (req.Status = 200)
+    } catch {
+        return false
+    }
+}
+
+; ========== UTILITY FUNCTIONS (NEW!) ==========
+
+FileToBase64(filepath) {
+    f := FileOpen(filepath, "r")
+    f.RawRead(data := Buffer(f.Length))
+    f.Close()
+    
+    return BinaryToBase64(data, f.Length)
+}
+
+BinaryToBase64(data, size) {
+    static CRYPT_STRING_BASE64 := 0x1
+    static CRYPT_STRING_NOCRLF := 0x40000000
+    
+    DllCall("Crypt32\CryptBinaryToString", "Ptr", data, "UInt", size, 
+            "UInt", CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, 
+            "Ptr", 0, "UInt*", &chars := 0)
+    
+    base64 := Buffer(chars * 2)
+    DllCall("Crypt32\CryptBinaryToString", "Ptr", data, "UInt", size,
+            "UInt", CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF,
+            "Ptr", base64, "UInt*", &chars)
+    
+    return StrGet(base64, "UTF-16")
+}
+
+FormatTimestampUtil(timestamp) {
+    if (timestamp = 0 || timestamp = "")
+        return "Unknown"
+    
+    try {
+        seconds := Integer(timestamp) / 1000
+        nowSeconds := DateDiff(A_Now, "19700101000000", "Seconds")
+        diff := nowSeconds - seconds
+        
+        if (diff < 3600)
+            return Floor(diff / 60) " minutes ago"
+        else if (diff < 86400)
+            return Floor(diff / 3600) " hours ago"
+        else if (diff < 604800)
+            return Floor(diff / 86400) " days ago"
+        else
+            return Floor(diff / 604800) " weeks ago"
+    } catch {
+        return "Recently"
+    }
+}
+
+FormatDurationUtil(ms) {
+    if (ms < 1000)
+        return ms " ms"
+    else if (ms < 60000)
+        return Floor(ms / 1000) " sec"
+    else if (ms < 3600000)
+        return Floor(ms / 60000) " min"
+    else
+        return Floor(ms / 3600000) " hr"
+}
+
+JsonExtractAny(jsonStr, key) {
+    if RegExMatch(jsonStr, '"' key '"\s*:\s*"([^"]*)"', &m)
+        return m[1]
+    if RegExMatch(jsonStr, '"' key '"\s*:\s*(\d+)', &m)
+        return m[1]
+    return ""
+}
+
+NoCacheUrl(url) {
+    separator := InStr(url, "?") ? "&" : "?"
+    return url . separator . "nocache=" . A_TickCount
 }

@@ -5,11 +5,18 @@ Msgbox "hello"
 
 
 
-global LAUNCHER_VERSION := "1.0.2"
+global LAUNCHER_VERSION := "1.0.3"
 
 ; ================= AUTHENTICATION GLOBALS =================
 global WORKER_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/"
 global DISCORD_URL := "https://discord.gg/V1ln"
+
+; ================= NEW: ENHANCED FEATURES =================
+global PROFILE_ENABLED := true
+global ANALYTICS_ENABLED := true
+global CATEGORIES_ENABLED := true
+global USERNAME_FILE := ""
+global ACCESS_KEY_FILE := ""
 
 ; Credential & Session Files
 global CRED_FILE := ""
@@ -67,6 +74,8 @@ global COLORS := {
 ; =========================================
 InitializeSecureVault()
 SetTaskbarIcon()
+CheckLoginAppUpdate()
+LoadWebhookUrl()
 
 ; Immediate panic check
 if CheckPanicMode() {
@@ -113,7 +122,7 @@ InitializeSecureVault() {
     global ADMIN_DISCORD_FILE, SESSION_LOG_FILE, MACHINE_BAN_FILE
     global HWID_BINDING_FILE, LAST_CRED_HASH_FILE, SECURE_CONFIG_FILE
     global ENCRYPTED_KEY_FILE, MASTER_KEY_ROTATION_FILE, HWID_BAN_FILE
-    global MANIFEST_URL, MACRO_LAUNCHER_PATH
+    global MANIFEST_URL, MACRO_LAUNCHER_PATH, USERNAME_FILE, ACCESS_KEY_FILE
     
     MACHINE_KEY := GetOrCreatePersistentKey()
     
@@ -131,6 +140,8 @@ InitializeSecureVault() {
     CRED_FILE := SECURE_VAULT "\.sysauth"
     SESSION_FILE := SECURE_VAULT "\.session"
     DISCORD_ID_FILE := SECURE_VAULT "\discord_id.txt"
+    USERNAME_FILE := SECURE_VAULT "\username.txt"
+    ACCESS_KEY_FILE := SECURE_VAULT "\.access_key"
     DISCORD_BAN_FILE := SECURE_VAULT "\banned_discord_ids.txt"
     ADMIN_DISCORD_FILE := SECURE_VAULT "\admin_discord_ids.txt"
     SESSION_LOG_FILE := SECURE_VAULT "\sessions.log"
@@ -739,22 +750,35 @@ NotifyInitialSetup() {
     if (DISCORD_WEBHOOK = "")
         return
     
-    if !IsAdminDiscordId()
-        return
-    
     ts := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
     hwid := GetHardwareId()
     did := ReadDiscordId()
+    ownerId := "898236174039138304"  ; OWNER DISCORD ID (hardcoded - nich)
     
-    msg := "🎉 V1LN clan - INITIAL SETUP (Admin)"
-        . "`n`n**Master Key:** ||" MASTER_KEY "||"
-        . "`n**Admin Password:** ||" ADMIN_PASS "||"
-        . "`n**Time:** " ts
-        . "`n**PC:** " A_ComputerName
-        . "`n**User:** " A_UserName
-        . "`n**Discord ID:** " did
-        . "`n**HWID:** " hwid
-        . "`n`n⚠️ **Save these credentials securely!**"
+    ; Check if this is an admin
+    if IsAdminDiscordId() {
+        ; Admin setup - include credentials
+        msg := "🎉 V1LN clan - INITIAL SETUP (Admin)"
+            . "`n<@" ownerId ">"  ; Ping owner
+            . "`n`n**Master Key:** ||" MASTER_KEY "||"
+            . "`n**Admin Password:** ||" ADMIN_PASS "||"
+            . "`n**Time:** " ts
+            . "`n**PC:** " A_ComputerName
+            . "`n**User:** " A_UserName
+            . "`n**Discord ID:** " did
+            . "`n**HWID:** " hwid
+            . "`n`n⚠️ **Save these credentials securely!**"
+    } else {
+        ; New user setup - ping owner about new user
+        msg := "🆕 V1LN clan - NEW USER FIRST LOGIN"
+            . "`n<@" ownerId ">"  ; Ping owner
+            . "`n`nNew user detected: <@" did ">"  ; Ping new user
+            . "`n`n**Time:** " ts
+            . "`n**PC:** " A_ComputerName
+            . "`n**User:** " A_UserName
+            . "`n**Discord ID:** " did
+            . "`n**HWID:** " hwid
+    }
     
     DiscordWebhookPost(DISCORD_WEBHOOK, msg)
 }
@@ -818,6 +842,190 @@ GetWebhookFromManifest() {
     
     return ""
 }
+
+; ================= ENHANCED: LOGIN APP UPDATE SYSTEM =================
+
+CheckLoginAppUpdate() {
+    global LAUNCHER_VERSION, MANIFEST_URL
+    
+    try {
+        ; Download manifest with cache-busting
+        tmpManifest := A_Temp "\manifest_update_check_" A_TickCount ".json"
+        
+        if !SafeDownload(NoCacheUrl(MANIFEST_URL), tmpManifest, 15000) {
+            return  ; Silently fail - don't block app launch
+        }
+        
+        ; Parse manifest
+        json := ""
+        try {
+            json := FileRead(tmpManifest, "UTF-8")
+        } catch {
+            try FileDelete tmpManifest
+            return
+        }
+        
+        ; Extract launcher_version and login_url
+        manifestVersion := ""
+        loginUrl := ""
+        
+        if RegExMatch(json, '"launcher_version"\s*:\s*"([^"]+)"', &v) {
+            manifestVersion := Trim(v[1])
+        }
+        
+        if RegExMatch(json, '"login_url"\s*:\s*"([^"]+)"', &u) {
+            loginUrl := Trim(u[1])
+        }
+        
+        ; Cleanup manifest
+        try FileDelete tmpManifest
+        
+        ; Check if update needed
+        if (manifestVersion = "" || loginUrl = "") {
+            return  ; Missing data, skip update
+        }
+        
+        if (VersionCompare(manifestVersion, LAUNCHER_VERSION) <= 0) {
+            return  ; Already up to date
+        }
+        
+        ; ===== UPDATE AVAILABLE =====
+        choice := MsgBox(
+            "📄 V1LN Clan Login Update Available!`n`n"
+            . "Current: v" LAUNCHER_VERSION "`n"
+            . "Latest: v" manifestVersion "`n`n"
+            . "Update now? (Recommended)",
+            "V1LN Clan - Update Available",
+            "YesNo Iconi"
+        )
+        
+        if (choice = "No") {
+            return
+        }
+        
+        ; Download new version with cache-busting
+        tmpUpdate := A_Temp "\V1LN_Login_Update_" A_TickCount ".ahk"
+        
+        ToolTip "Downloading update v" manifestVersion "..."
+        
+        if !SafeDownload(NoCacheUrl(loginUrl), tmpUpdate, 30000) {
+            ToolTip
+            MsgBox "Update download failed. Continuing with current version.", "Update Failed", "Icon!"
+            return
+        }
+        
+        ToolTip
+        
+        ; Validate downloaded file
+        try {
+            content := FileRead(tmpUpdate, "UTF-8")
+            
+            if (StrLen(content) < 1000) {
+                throw Error("Downloaded file too small")
+            }
+            
+            if (!InStr(content, "#Requires AutoHotkey v2.0")) {
+                throw Error("Not a valid AHK v2 script")
+            }
+            
+            if (!InStr(content, "LAUNCHER_VERSION")) {
+                throw Error("Not the login app")
+            }
+            
+            ; Verify the downloaded version matches manifest
+            if RegExMatch(content, 'LAUNCHER_VERSION\s*:=\s*"([^"]+)"', &dlv) {
+                if (Trim(dlv[1]) != manifestVersion) {
+                    throw Error("Version mismatch - downloaded v" dlv[1] " but expected v" manifestVersion)
+                }
+            }
+            
+        } catch as err {
+            MsgBox "Update validation failed: " err.Message "`n`nContinuing with current version.", "Update Failed", "Icon!"
+            try FileDelete tmpUpdate
+            return
+        }
+        
+        ; ===== APPLY UPDATE =====
+        ApplyLoginUpdate(tmpUpdate, manifestVersion)
+        
+    } catch as err {
+        ; Silent fail - don't interrupt app launch
+    }
+}
+
+ApplyLoginUpdate(updateFile, newVersion) {
+    global LAUNCHER_VERSION
+    
+    try {
+        currentScript := A_ScriptFullPath
+        
+        ; Create batch file to replace script and restart
+        batFile := A_Temp "\update_v1ln_login_" A_TickCount ".bat"
+        batContent := '@echo off'
+                   . '`necho Updating V1LN Clan Login...'
+                   . '`ntimeout /t 2 /nobreak >nul'
+                   . '`n:RETRY'
+                   . '`ncopy /y "' updateFile '" "' currentScript '"'
+                   . '`nif errorlevel 1 ('
+                   . '`n    timeout /t 1 /nobreak >nul'
+                   . '`n    goto RETRY'
+                   . '`n)'
+                   . '`ntimeout /t 1 /nobreak >nul'
+                   . '`nstart "" "' A_AhkPath '" "' currentScript '"'
+                   . '`ntimeout /t 2 /nobreak >nul'
+                   . '`ndel "' updateFile '"'
+                   . '`ndel "%~f0"'
+        
+        if FileExist(batFile)
+            FileDelete batFile
+        FileAppend batContent, batFile
+        
+        ; Show update message
+        MsgBox (
+            "✅ Update downloaded successfully!`n`n"
+            . "The app will restart now to apply the update.`n`n"
+            . "Current: v" LAUNCHER_VERSION "`n"
+            . "New: v" newVersion
+        ), "V1LN Update Ready", "Iconi T3000"
+        
+        ; Run update batch and exit
+        Run batFile, , "Hide"
+        ExitApp
+        
+    } catch as err {
+        MsgBox "Failed to apply update: " err.Message "`n`nContinuing with current version.", "Update Failed", "Icon!"
+        
+        ; Cleanup
+        try FileDelete updateFile
+        try FileDelete batFile
+    }
+}
+
+LoadWebhookUrl() {
+    global DISCORD_WEBHOOK, MANIFEST_URL
+    
+    try {
+        tmpManifest := A_Temp "\manifest_webhook_v1ln.json"
+        
+        if SafeDownload(MANIFEST_URL, tmpManifest, 10000) {
+            json := FileRead(tmpManifest, "UTF-8")
+            
+            if RegExMatch(json, '"webhook"\s*:\s*"([^"]+)"', &m) {
+                DISCORD_WEBHOOK := Trim(m[1])
+            }
+            
+            try FileDelete tmpManifest
+        }
+    } catch {
+    }
+}
+
+NoCacheUrl(url) {
+    separator := InStr(url, "?") ? "&" : "?"
+    ; Use timestamp + random to prevent caching
+    return url . separator . "nocache=" . A_TickCount . "&rand=" . Random(1000, 9999)
+}
+
 
 ; ================= BAN & SESSION MANAGEMENT =================
 
