@@ -3185,7 +3185,7 @@ CreateFullWidthCard(win, item, x, y, w, h) {
     titleCtrl.SetFont("s13 bold")
     win.__cards.Push(titleCtrl)
     
-    versionCtrl := win.Add("Text", "x" (x + 120) " y" (y + 75) " w60 h22 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
+    versionCtrl := win.Add("Text", "x" (x + 120) " y" (y + 150) " w60 h22 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
     versionCtrl.SetFont("s9 bold")
     win.__cards.Push(versionCtrl)
     
@@ -3247,13 +3247,13 @@ CreateGridCard(win, item, x, y, w, h) {
     titleCtrl.SetFont("s11 bold")
     win.__cards.Push(titleCtrl)
     
-    versionCtrl := win.Add("Text", "x" (x + 90) " y" (y + 63) " w50 h18 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
+    versionCtrl := win.Add("Text", "x" (x + 90) " y" (y + 37) " w50 h18 Background" COLORS.accentAlt " c" COLORS.text " Center", "v" item.info.Version)
     versionCtrl.SetFont("s8 bold")
     win.__cards.Push(versionCtrl)
     
     runCount := GetRunCount(item.path)
     if (runCount > 0) {
-        runCountCtrl := win.Add("Text", "x" (x + 150) " y" (y + 63) " w80 h18 c" COLORS.textDim " BackgroundTrans", "Runs: " runCount)
+        runCountCtrl := win.Add("Text", "x" (x + 150) " y" (y + 37) " w80 h18 c" COLORS.textDim " BackgroundTrans", "Runs: " runCount)
         runCountCtrl.SetFont("s8")
         win.__cards.Push(runCountCtrl)
     }
