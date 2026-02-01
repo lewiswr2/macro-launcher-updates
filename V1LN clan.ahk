@@ -1054,6 +1054,42 @@ SafeOpenURL(url) {
 
 ; ============= LOGIN & SESSION MANAGEMENT =============
 
+FetchCredentialsFromCloudflare() {
+    global WORKER_URL
+    
+    try {
+        url := WORKER_URL "get-credentials"
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(10000, 10000, 10000, 10000)
+        req.Open("POST", url, false)
+        req.SetRequestHeader("Content-Type", "application/json")
+        req.SetRequestHeader("Cache-Control", "no-cache")
+        req.Send()
+        
+        if (req.Status = 200) {
+            response := req.ResponseText
+            
+            ; Parse JSON manually
+            username := ""
+            password := ""
+            
+            if RegExMatch(response, '"username"\s*:\s*"([^"]*)"', &m1)
+                username := m1[1]
+            
+            if RegExMatch(response, '"password"\s*:\s*"([^"]*)"', &m2)
+                password := m2[1]
+            
+            if (username != "" && password != "") {
+                return {username: username, password: password, success: true}
+            }
+        }
+    } catch as err {
+        ; Silent fail - will show error in HandleLogin
+    }
+    
+    return {username: "", password: "", success: false}
+}
+
 CheckSession() {
     global SESSION_FILE, SESSION_TOKEN_FILE
     
@@ -1130,7 +1166,7 @@ CreateLoginGui() {
 }
 
 HandleLogin(userEdit, passEdit, status) {
-    global WORKER_URL, SESSION_FILE, SESSION_TOKEN_FILE, gLoginGui
+    global WORKER_URL, SESSION_FILE, SESSION_TOKEN_FILE, gLoginGui, MAX_ATTEMPTS
     
     username := Trim(userEdit.Value)
     password := Trim(passEdit.Value)
@@ -1141,105 +1177,169 @@ HandleLogin(userEdit, passEdit, status) {
         return
     }
     
-    status.Value := "⏳ Authenticating..."
+    status.Value := "⏳ Fetching credentials from server..."
     
-    ; Prepare request body
+    ; Fetch valid credentials from Cloudflare
+    validCreds := FetchCredentialsFromCloudflare()
+    
+    if !validCreds.success {
+        status.Value := "❌ Failed to connect to authentication server"
+        SoundBeep(700, 120)
+        return
+    }
+    
+    ; Check if entered credentials match
+    if (username != validCreds.username || password != validCreds.password) {
+        status.Value := "❌ Invalid username or password"
+        SoundBeep(700, 120)
+        
+        ; Record failed attempt
+        RecordFailedAttempt()
+        attemptsLeft := MAX_ATTEMPTS - GetAttemptCount()
+        
+        if attemptsLeft <= 0 {
+            CreateLockout()
+            status.Value := "❌ Too many failed attempts. Account locked."
+            SoundBeep(700, 120)
+            Sleep 2000
+            ExitApp
+        }
+        
+        status.Value := "❌ Invalid credentials. " attemptsLeft " attempts remaining."
+        return
+    }
+    
+    ; Clear failed attempts on success
+    ClearAttempts()
+    
+    status.Value := "⏳ Validating access..."
+    
+    ; Perform ban checks
+    if !ValidateNotBanned() {
+        status.Value := "❌ Account banned"
+        SoundBeep(700, 120)
+        Sleep 2000
+        ShowBanMessage()
+        ExitApp
+    }
+    
+    ; Create session
     hwid := GetHardwareId()
     discordId := ReadDiscordId()
     
-    body := '{'
-    body .= '"username":"' JsonEscape(username) '",'
-    body .= '"password":"' JsonEscape(password) '",'
-    body .= '"hwid":"' hwid '",'
-    body .= '"discord_id":"' discordId '"'
-    body .= '}'
+    sessionData := A_Now "|" HashString(password . A_Now)
+    try {
+        if FileExist(SESSION_FILE)
+            FileDelete SESSION_FILE
+        FileAppend sessionData, SESSION_FILE
+    }
+    
+    ; Create session token
+    sessionToken := HashString(username . password . hwid . A_Now)
+    try {
+        if FileExist(SESSION_TOKEN_FILE)
+            FileDelete SESSION_TOKEN_FILE
+        FileAppend sessionToken, SESSION_TOKEN_FILE
+    }
+    
+    ; Log successful login
+    LogSession(username, hwid, discordId, false)
+    
+    ; Submit login log to Cloudflare
+    SubmitLoginLog(username, "user")
+    
+    status.Value := "✅ Login successful!"
+    Sleep 500
+    
+    gLoginGui.Destroy()
+    
+    ; Start watchdogs
+    StartSessionWatchdog()
+    StartPanicWatchdog()
+    
+    LaunchMainApp()
+    ExitApp
+}
+
+SubmitLoginLog(loginUser, role) {
+    global WORKER_URL
+    
+    discordId := ReadDiscordId()
+    hwid := GetHardwareId()
     
     try {
-        ; Call your Worker's login endpoint
+        url := WORKER_URL "log"
         req := ComObject("WinHttp.WinHttpRequest.5.1")
-        req.SetTimeouts(15000, 15000, 15000, 15000)
-        req.Open("POST", WORKER_URL "/auth/login", false)
+        req.SetTimeouts(10000, 10000, 10000, 10000)
+        req.Open("POST", url, false)
         req.SetRequestHeader("Content-Type", "application/json")
-        req.SetRequestHeader("User-Agent", "V1LN-Clan")
-        req.Send(body)
         
-        if (req.Status = 200) {
-            resp := req.ResponseText
-            
-            ; Extract session token from response
-            sessionToken := ""
-            if RegExMatch(resp, '"session_token"\s*:\s*"([^"]+)"', &m) {
-                sessionToken := m[1]
-            } else if RegExMatch(resp, '"token"\s*:\s*"([^"]+)"', &m) {
-                sessionToken := m[1]
-            }
-            
-            if (sessionToken = "") {
-                status.Value := "❌ Invalid server response"
-                SoundBeep(700, 120)
-                return
-            }
-            
-            ; Save session token
-            try {
-                if FileExist(SESSION_TOKEN_FILE)
-                    FileDelete SESSION_TOKEN_FILE
-                FileAppend sessionToken, SESSION_TOKEN_FILE
-            }
-            
-            ; Create local session
-            sessionData := A_Now "|" HashString(password . A_Now)
-            try {
-                if FileExist(SESSION_FILE)
-                    FileDelete SESSION_FILE
-                FileAppend sessionData, SESSION_FILE
-            }
-            
-            ; Extract and save Discord ID if present
-            if RegExMatch(resp, '"discord_id"\s*:\s*"([^"]+)"', &m) {
-                SaveDiscordId(m[1])
-            }
-            
-            ; Check if user is admin
-            isAdmin := false
-            if RegExMatch(resp, '"is_admin"\s*:\s*true')
-                isAdmin := true
-            
-            ; Log successful login
-            LogSession(username, hwid, discordId, isAdmin)
-            
-            status.Value := "✅ Login successful!"
-            Sleep 500
-            
-            gLoginGui.Destroy()
-            LaunchMainApp()
-            ExitApp
-            
-        } else if (req.Status = 401) {
-            status.Value := "❌ Invalid username or password"
-            SoundBeep(700, 120)
-            
-        } else if (req.Status = 403) {
-            resp := req.ResponseText
-            if InStr(resp, "banned") {
-                status.Value := "❌ Account banned"
-                SoundBeep(700, 120)
-                Sleep 2000
-                ShowBanMessage()
-                ExitApp
-            } else {
-                status.Value := "❌ Access denied"
-                SoundBeep(700, 120)
-            }
-            
-        } else {
-            status.Value := "❌ Server error (" req.Status ")"
-            SoundBeep(700, 120)
+        payload := '{'
+        payload .= '"time":"' FormatTime(, "yyyy-MM-dd HH:mm:ss") '",'
+        payload .= '"pc":"' JsonEscape(A_ComputerName) '",'
+        payload .= '"user":"' JsonEscape(A_UserName) '",'
+        payload .= '"discord_id":"' discordId '",'
+        payload .= '"hwid":"' hwid '",'
+        payload .= '"role":"' role '",'
+        payload .= '"login_user":"' JsonEscape(loginUser) '"'
+        payload .= '}'
+        
+        req.Send(payload)
+    } catch {
+        ; Silently fail - logging is not critical
+    }
+}
+
+RecordFailedAttempt() {
+    global LOCKOUT_FILE
+    
+    attemptsFile := A_Temp "\.login_attempts"
+    
+    try {
+        attempts := 0
+        if FileExist(attemptsFile) {
+            attempts := Integer(Trim(FileRead(attemptsFile)))
         }
         
-    } catch as err {
-        status.Value := "❌ Connection failed: " err.Message
-        SoundBeep(700, 120)
+        attempts++
+        
+        FileDelete attemptsFile
+        FileAppend String(attempts), attemptsFile
+    } catch {
+    }
+}
+
+GetAttemptCount() {
+    attemptsFile := A_Temp "\.login_attempts"
+    
+    try {
+        if FileExist(attemptsFile) {
+            return Integer(Trim(FileRead(attemptsFile)))
+        }
+    } catch {
+    }
+    
+    return 0
+}
+
+ClearAttempts() {
+    attemptsFile := A_Temp "\.login_attempts"
+    
+    try {
+        if FileExist(attemptsFile)
+            FileDelete attemptsFile
+    } catch {
+    }
+}
+
+CreateLockout() {
+    global LOCKOUT_FILE
+    
+    try {
+        if FileExist(LOCKOUT_FILE)
+            FileDelete LOCKOUT_FILE
+        FileAppend A_Now, LOCKOUT_FILE
+    } catch {
     }
 }
 
