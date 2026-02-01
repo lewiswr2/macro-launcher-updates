@@ -3,7 +3,7 @@
 #NoTrayIcon  ; <-- disable during debugging
 Msgbox "hello"
 
-global LAUNCHER_VERSION := "1.0.2"
+global LAUNCHER_VERSION := "1.0.3"
 
 ; ================= AUTHENTICATION GLOBALS =================
 global WORKER_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/"
