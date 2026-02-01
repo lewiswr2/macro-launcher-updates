@@ -1,8 +1,6 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
-#NoTrayIcon  ; <-- disable during debugging
-Msgbox "hello"
-
+#NoTrayIcon
 global LAUNCHER_VERSION := "1.0.3"
 
 ; ================= AUTHENTICATION GLOBALS =================
