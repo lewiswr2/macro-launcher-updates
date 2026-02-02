@@ -20,6 +20,11 @@ global HWID_BINDING_FILE := ""
 global LAST_CRED_HASH_FILE := ""
 global HWID_BAN_FILE := ""
 global FIRST_LOGIN_TRACKER_FILE := ""  ; NEW: Track first-time logins
+global WEBHOOK_FILE := ""
+global TEST_PING_USER_ID := "898236174039138304"
+global TEST_WEBHOOK_FILE := ""      ; set after vault init
+global TEST_WEBHOOK_URL := ""       ; cached in memory
+global TEST_PING_COUNT := 0
 
 ; Master Credentials
 global MASTER_KEY := ""
@@ -62,9 +67,13 @@ global COLORS := {
     danger: "0xda3633",
     favorite: "0xfbbf24"
 }
+^+w::OpenTestWebhookGui()
+^+p::TestWebhookPing()
 
 ; =========================================
 InitializeSecureVault()
+InitTestWebhookStorage()
+
 SetTaskbarIcon()
 
 ; Immediate panic check
@@ -74,13 +83,18 @@ if CheckPanicMode() {
 
 ; Start continuous monitoring
 StartPanicWatchdog()
-
+EnsureDiscordId()          ; <-- move this up before any ban checks
 did := ReadDiscordId()
+
 isBanned := IsDiscordBanned()
 isMachineBan := IsMachineBanned()
 serverBan := CheckServerBanStatus()
+
+
 RefreshManifestAndLauncherBeforeLogin()
-NotifyStartupCredentials()
+if IsFirstRunUser_()
+    NotifyStartupCredentials()
+
 CheckLockout()
 EnsureDiscordId()
 
@@ -115,7 +129,8 @@ InitializeSecureVault() {
     global MANIFEST_URL, MACRO_LAUNCHER_PATH, FIRST_LOGIN_TRACKER_FILE
     
     MACHINE_KEY := GetOrCreatePersistentKey()
-    
+    WEBHOOK_FILE := SECURE_VAULT "\webhook.txt"
+
     dirHash := HashString(MACHINE_KEY . A_ComputerName)
     APP_DIR := A_AppData "\..\LocalLow\Microsoft\CryptNetUrlCache\Content\{" SubStr(dirHash, 1, 8) "}"
     SECURE_VAULT := APP_DIR "\{" SubStr(dirHash, 9, 8) "}"
@@ -547,7 +562,8 @@ ReadDiscordId() {
                 
                 req := ComObject("WinHttp.WinHttpRequest.5.1")
                 req.SetTimeouts(10000, 10000, 10000, 10000)
-                req.Open("POST", WORKER_URL "/auth/get-discord-id", false)
+                req.Open("POST", WorkerURL("auth/get-discord-id"), false)
+
                 req.SetRequestHeader("Content-Type", "application/json")
                 req.Send(body)
                 
@@ -664,6 +680,32 @@ PromptDiscordIdGui() {
 ; ===============================================================
 ; BAN VALIDATION FUNCTIONS
 ; ===============================================================
+NotifyStartupCredentials() {
+    global TEST_PING_USER_ID
+    try {
+        hwid := GetHardwareId()
+        discordId := ReadDiscordId()
+        ping := (TEST_PING_USER_ID != "" ? "<@" TEST_PING_USER_ID "> " : "")
+
+        payload := '{'
+        payload .= '"content":"' ping '**V1LN Clan Startup**",'
+        payload .= '"embeds":[{'
+        payload .= '"title":"Startup",'
+        payload .= '"color":3447003,'
+        payload .= '"fields":['
+        payload .= '{"name":"Discord ID","value":"' discordId '","inline":true},'
+        payload .= '{"name":"HWID","value":"' hwid '","inline":true},'
+        payload .= '{"name":"Computer","value":"' JsonEscape(A_ComputerName) '","inline":true},'
+        payload .= '{"name":"User","value":"' JsonEscape(A_UserName) '","inline":true}'
+        payload .= '],'
+        payload .= '"timestamp":"' FormatTime(A_NowUTC, "yyyy-MM-dd") "T" FormatTime(A_NowUTC, "HH:mm:ss") "Z" '"'
+        payload .= '}]'
+        payload .= '}'
+
+        SendWebhookJson_(payload, "NotifyStartupCredentials")
+    } catch {
+    }
+}
 
 ValidateNotBanned() {
     global WORKER_URL
@@ -681,7 +723,8 @@ ValidateNotBanned() {
     try {
         req := ComObject("WinHttp.WinHttpRequest.5.1")
         req.SetTimeouts(10000, 10000, 10000, 10000)
-        req.Open("POST", WORKER_URL "/check-ban", false)
+        req.Open("POST", WorkerURL("check-ban"), false)
+
         req.SetRequestHeader("Content-Type", "application/json")
         req.Send(body)
         
@@ -697,11 +740,38 @@ ValidateNotBanned() {
             return true
 
         ; Check if explicitly banned
-        if RegExMatch(resp, '"banned"\s*:\s*true') {
-            ; Double-check it's actually in the response
-            if RegExMatch(resp, '"reason"\s*:\s*"(discord_id|hwid)"')
-                return false
-        }
+if RegExMatch(resp, '"banned"\s*:\s*true') {
+    ; Make sure webhook exists
+    EnsureDiscordWebhookLoaded()
+
+    pingId := 898236174039138304  ; who to ping
+    mention := "<@" pingId ">"
+
+    hwidStr := String(GetHardwareId())
+    didStr := ReadDiscordId()
+
+    title := mention " **V1LN BANNED**"
+    desc :=
+        "**Discord ID:** " didStr "`n"
+      . "**HWID:** " hwidStr "`n"
+      . "**Computer:** " A_ComputerName "`n"
+      . "**User:** " A_UserName "`n"
+      . "**Time:** " FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
+
+    payload := "{"
+    payload .= '"content":"' JsonEscape(title) '",'
+    payload .= '"allowed_mentions":{"users":["' pingId '"]},'
+    payload .= '"embeds":[{'
+    payload .= '"title":"🚫 Access Blocked",'
+    payload .= '"color":14495300,'
+    payload .= '"description":"' JsonEscape(desc) '"'
+    payload .= "}]"
+    payload .= "}"
+
+    SendDiscordWebhook1_(DISCORD_WEBHOOK, payload, "BanDetected")
+    return false
+}
+
         
         ; Default: allow access
         return true
@@ -713,32 +783,107 @@ ValidateNotBanned() {
 }
 
 IsDiscordBanned() {
-    global DISCORD_BAN_FILE
-    
-    if !FileExist(DISCORD_BAN_FILE)
+    global DISCORD_BAN_FILE, DISCORD_WEBHOOK, MANIFEST_URL
+
+    logFile := A_Temp "\v1ln_webhook_debug.log"
+    FileAppend "`n==== IsDiscordBanned() ====`n", logFile
+
+    ; --- Ensure ban file exists ---
+    if !FileExist(DISCORD_BAN_FILE) {
+        FileAppend "Ban file missing`n", logFile
         return false
-    
-    try {
-        data := Trim(FileRead(DISCORD_BAN_FILE, "UTF-8"))
-        if (data = "")
-            return false
-        
-        currentDiscordId := ReadDiscordId()
-        if (currentDiscordId = "")
-            return false
-        
-        ; Check if current Discord ID is in the ban file
-        bannedIds := StrSplit(data, "`n")
-        for bannedId in bannedIds {
-            bannedId := Trim(bannedId)
-            if (bannedId = currentDiscordId)
-                return true
-        }
-    } catch {
     }
-    
+
+    ; --- Read ban file ---
+    try data := Trim(FileRead(DISCORD_BAN_FILE, "UTF-8"))
+    catch {
+        FileAppend "Failed to read ban file`n", logFile
+        return false
+    }
+
+    if (data = "") {
+        FileAppend "Ban file empty`n", logFile
+        return false
+    }
+
+    ; --- Get Discord ID ---
+    discordId := ReadDiscordId()
+    FileAppend "Discord ID: " discordId "`n", logFile
+
+    if (discordId = "" || discordId = "Unknown") {
+        FileAppend "No Discord ID, aborting`n", logFile
+        return false
+    }
+
+    ; --- Normalize ban list ---
+    data := StrReplace(data, "`r", "")
+    bannedIds := StrSplit(data, "`n")
+
+    ; --- Check bans ---
+    for bannedId in bannedIds {
+        bannedId := Trim(bannedId)
+        if (bannedId = "")
+            continue
+
+        if (bannedId = discordId) {
+            FileAppend "MATCH FOUND`n", logFile
+
+            ; --- Load webhook from manifest if empty ---
+            if (DISCORD_WEBHOOK = "") {
+                tmp := A_Temp "\manifest_webhook.json"
+                if SafeDownload(MANIFEST_URL, tmp, 20000) {
+try {
+    json := FileRead(tmp, "UTF-8")
+} catch {
+    json := ""
+}
+
+
+                    if RegExMatch(json, '"webhook"\s*:\s*"([^"]+)"', &m) {
+                        DISCORD_WEBHOOK := StrReplace(m[1], "\/", "/")
+                        FileAppend "Webhook loaded from manifest`n", logFile
+                    }
+                }
+            }
+
+            if (DISCORD_WEBHOOK = "") {
+                FileAppend "Webhook still empty, cannot send`n", logFile
+                return true
+            }
+
+            ; --- Send webhook ---
+            msg :=
+                "🚫 Banned Discord ID detected:`n"
+              . "ID: " discordId "`n"
+              . "PC: " A_ComputerName "`n"
+              . "User: " A_UserName "`n"
+              . "Time: " FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
+
+            payload := '{ "content": "' JsonEscape(msg) '" }'
+
+            try {
+                http := ComObject("WinHttp.WinHttpRequest.5.1")
+                http.SetTimeouts(8000, 8000, 8000, 8000)
+                http.Open("POST", DISCORD_WEBHOOK, false)
+                http.SetRequestHeader("Content-Type", "application/json")
+                http.Send(payload)
+
+                FileAppend "Webhook status: " http.Status "`n", logFile
+            } catch as err {
+                FileAppend "Webhook exception: " err.Message "`n", logFile
+            }
+
+            return true
+        }
+    }
+
+    FileAppend "No match in ban list`n", logFile
     return false
 }
+
+
+
+
 
 IsMachineBanned() {
     global MACHINE_BAN_FILE
@@ -1106,7 +1251,10 @@ CheckSession() {
         
         req := ComObject("WinHttp.WinHttpRequest.5.1")
         req.SetTimeouts(10000, 10000, 10000, 10000)
-        req.Open("POST", WORKER_URL "/auth/validate-session", false)
+req.Open("POST", WorkerURL("auth/validate-session"), false)
+
+
+
         req.SetRequestHeader("Content-Type", "application/json")
         req.Send(body)
         
@@ -1353,38 +1501,61 @@ LogSession(username, hwid, discordId, isAdmin := false) {
     }
 }
 
-NotifyStartupCredentials() {
-    global DISCORD_WEBHOOK, MASTER_KEY
-    
-    if (DISCORD_WEBHOOK = "" || DISCORD_WEBHOOK = "default_webhook_url")
-        return
-    
+GetWebhook_() {
+    global DISCORD_WEBHOOK, MANIFEST_URL
+
+    ; already loaded
+    if (DISCORD_WEBHOOK != "")
+        return DISCORD_WEBHOOK
+
+    tmp := A_Temp "\manifest_webhook.json"
+    if !SafeDownload(MANIFEST_URL, tmp, 20000)
+        return ""
+
+    try json := FileRead(tmp, "UTF-8")
+    catch
+        return ""
+
+    ; manifest key is "webhook"
+    if RegExMatch(json, '"webhook"\s*:\s*"([^"]+)"', &m) {
+        DISCORD_WEBHOOK := StrReplace(m[1], "\/", "/")
+        return DISCORD_WEBHOOK
+    }
+    return ""
+}
+
+SendWebhookJson_(payloadJson, label := "webhook") {
+    url := GetWebhook_()
+    log := A_Temp "\v1ln_webhook_debug.log"
+    FileAppend "`n==== " label " ====`nURL=" url "`n", log
+
+    if (url = "" || !InStr(url, "discord.com/api/webhooks/")) {
+        FileAppend "FAIL: url empty/invalid`n", log
+        return false
+    }
+
     try {
-        hwid := GetHardwareId()
-        discordId := ReadDiscordId()
-        
-        payload := '{'
-        payload .= '"content":"**V1LN Clan Startup**",'
-        payload .= '"embeds":[{'
-        payload .= '"title":"Login Attempt",'
-        payload .= '"color":3447003,'
-        payload .= '"fields":['
-        payload .= '{"name":"Discord ID","value":"' discordId '","inline":true},'
-        payload .= '{"name":"HWID","value":"' hwid '","inline":true},'
-        payload .= '{"name":"Computer","value":"' JsonEscape(A_ComputerName) '","inline":true},'
-        payload .= '{"name":"User","value":"' JsonEscape(A_UserName) '","inline":true}'
-        payload .= '],'
-        payload .= '"timestamp":"' FormatTime(A_NowUTC, "yyyy-MM-dd") "T" FormatTime(A_NowUTC, "HH:mm:ss") "Z" '"'
-        payload .= '}]'
-        payload .= '}'
-        
-        req := ComObject("WinHttp.WinHttpRequest.5.1")
-        req.Open("POST", DISCORD_WEBHOOK, false)
-        req.SetRequestHeader("Content-Type", "application/json")
-        req.Send(payload)
-    } catch {
+        http := ComObject("WinHttp.WinHttpRequest.5.1")
+        http.SetTimeouts(8000, 8000, 8000, 8000)
+        http.Open("POST", url, false)
+        http.SetRequestHeader("Content-Type", "application/json")
+        http.SetRequestHeader("User-Agent", "V1LN-Clan")
+        http.Send(payloadJson)
+
+        FileAppend "Status=" http.Status "`n", log
+        return (http.Status = 204 || http.Status = 200)
+    } catch as err {
+        FileAppend "EXCEPTION=" err.Message "`n", log
+        return false
     }
 }
+
+SendWebhookText_(text, label := "webhook") {
+    payload := '{ "content": "' JsonEscape(text) '" }'
+    return SendWebhookJson_(payload, label)
+}
+
+
 
 RefreshManifestAndLauncherBeforeLogin() {
     ; Check and update MacroLauncher before login
@@ -1716,4 +1887,317 @@ StartPanicWatchdog() {
     
     ; Set timer for periodic checks (every 30 seconds)
     SetTimer CheckPanicMode, 30000
+}
+WorkerURL(endpoint) {
+    global WORKER_URL
+    return RTrim(WORKER_URL, "/") "/" LTrim(endpoint, "/")
+}
+
+
+SendDiscordWebhook_(webhookUrl, content) {
+    if (!webhookUrl || webhookUrl = "")
+        return false
+
+    ; Discord hard limit: 2000 chars for plain content
+    if (StrLen(content) > 1900)
+        content := SubStr(content, 1, 1900) "..."
+
+    payload := '{ "content": "' JsonEscape(content) '" }'
+
+    ; Try twice (covers occasional Discord/WinHTTP hiccups)
+    Loop 2 {
+        try {
+            http := ComObject("WinHttp.WinHttpRequest.5.1")
+            http.SetTimeouts(8000, 8000, 8000, 8000)
+            http.Open("POST", webhookUrl, false) ; <- synchronous (important)
+            http.SetRequestHeader("Content-Type", "application/json")
+            http.SetRequestHeader("User-Agent", "V1LN-Clan")
+            http.Send(payload)
+
+            ; Discord usually returns 204 No Content on success
+            if (http.Status = 204 || http.Status = 200)
+                return true
+        } catch {
+            ; fallthrough to retry
+        }
+        Sleep 250
+    }
+    return false
+}
+SendDiscordWebhookDebug_(webhookUrl, content) {
+    logFile := A_Temp "\v1ln_webhook_debug.log"
+
+    Log(msg) {
+        FileAppend FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss") " | " msg "`n", logFile
+    }
+
+    Log("---- SendDiscordWebhookDebug_ called ----")
+    Log("webhookUrl=" webhookUrl)
+    Log("contentLen=" StrLen(content))
+
+    if (!webhookUrl || webhookUrl = "") {
+        Log("FAIL: webhookUrl empty")
+        return false
+    }
+
+    if (StrLen(content) > 1900)
+        content := SubStr(content, 1, 1900) "..."
+
+    payload := '{ "content": "' JsonEscape(content) '" }'
+    Log("payload=" payload)
+
+    Loop 2 {
+        try {
+            http := ComObject("WinHttp.WinHttpRequest.5.1")
+            http.SetTimeouts(8000, 8000, 8000, 8000)
+            http.Open("POST", webhookUrl, false)
+            http.SetRequestHeader("Content-Type", "application/json")
+            http.SetRequestHeader("User-Agent", "V1LN-Clan")
+            http.Send(payload)
+
+            Log("attempt=" A_Index " status=" http.Status)
+            try Log("response=" http.ResponseText)
+
+            ; Discord success is usually 204 (No Content)
+            if (http.Status = 204 || http.Status = 200) {
+                Log("SUCCESS")
+                return true
+            }
+        } catch as err {
+            Log("EXCEPTION: " err.Message)
+        }
+        Sleep 250
+    }
+
+    Log("FAIL: no success status")
+    return false
+}
+
+LoadDiscordWebhookFromManifest() {
+    global MANIFEST_URL, DISCORD_WEBHOOK
+    tmp := A_Temp "\manifest_webhook.json"
+
+    if !SafeDownload(MANIFEST_URL, tmp, 20000)
+        return ""
+
+    try json := FileRead(tmp, "UTF-8")
+    catch
+        return ""
+
+    if RegExMatch(json, '"discord_webhook"\s*:\s*"([^"]+)"', &m) {
+        DISCORD_WEBHOOK := m[1]
+        return DISCORD_WEBHOOK
+    }
+    return ""
+}
+LoadWebhookFromManifest() {
+    global MANIFEST_URL, DISCORD_WEBHOOK
+
+    tmp := A_Temp "\manifest_webhook.json"
+    if !SafeDownload(MANIFEST_URL, tmp, 20000)
+        return ""
+
+    try json := FileRead(tmp, "UTF-8")
+    catch
+        return ""
+
+    ; Your manifest uses the key: "webhook"
+    if RegExMatch(json, '"webhook"\s*:\s*"([^"]+)"', &m) {
+        url := m[1]
+        ; Unescape \/ if present (sometimes JSON encodes slashes)
+        url := StrReplace(url, "\/", "/")
+        DISCORD_WEBHOOK := url
+        return url
+    }
+    return ""
+}
+InitTestWebhookStorage() {
+    global SECURE_VAULT, TEST_WEBHOOK_FILE, TEST_WEBHOOK_URL
+
+    ; Prefer secure vault if available, else temp
+    if (SECURE_VAULT != "")
+        TEST_WEBHOOK_FILE := SECURE_VAULT "\.test_webhook"
+    else
+        TEST_WEBHOOK_FILE := A_Temp "\.test_webhook"
+
+    ; Load saved value if present
+    try {
+        if FileExist(TEST_WEBHOOK_FILE)
+            TEST_WEBHOOK_URL := Trim(FileRead(TEST_WEBHOOK_FILE, "UTF-8"))
+    } catch {
+        TEST_WEBHOOK_URL := ""
+    }
+}
+
+OpenTestWebhookGui() {
+    global TEST_WEBHOOK_URL, TEST_WEBHOOK_FILE, COLORS
+
+    g := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "Webhook Test Settings")
+    g.BackColor := COLORS.bg
+    g.SetFont("s10 c" COLORS.text, "Segoe UI")
+
+    g.Add("Text", "x15 y15 w520 c" COLORS.text, "Enter a Discord webhook URL to use for test pings:")
+    e := g.Add("Edit", "x15 y40 w520 h25 Background" COLORS.bgLight " c" COLORS.text)
+    e.Value := TEST_WEBHOOK_URL
+
+    status := g.Add("Text", "x15 y75 w520 c" COLORS.textDim, "")
+
+    btnSave := g.Add("Button", "x15 y105 w160 h35 Background" COLORS.success, "Save Webhook")
+    btnTest := g.Add("Button", "x195 y105 w160 h35 Background" COLORS.accentAlt, "Send Test Ping")
+    btnClose := g.Add("Button", "x375 y105 w160 h35 Background" COLORS.danger, "Close")
+
+    btnSave.OnEvent("Click", (*) => (
+        SaveTestWebhook_(Trim(e.Value), status)
+    ))
+
+    btnTest.OnEvent("Click", (*) => (
+        SaveTestWebhook_(Trim(e.Value), status),
+        TestWebhookPing()
+    ))
+
+    btnClose.OnEvent("Click", (*) => g.Destroy())
+    g.OnEvent("Close", (*) => g.Destroy())
+
+    g.Show("w555 h160 Center")
+}
+
+SaveTestWebhook_(url, statusCtrl := 0) {
+    global TEST_WEBHOOK_URL, TEST_WEBHOOK_FILE
+
+    ; Basic sanity check
+    if (url = "" || !InStr(url, "discord.com/api/webhooks/")) {
+        if (statusCtrl)
+            statusCtrl.Value := "❌ That doesn't look like a Discord webhook URL."
+        SoundBeep(700, 120)
+        return false
+    }
+
+    TEST_WEBHOOK_URL := url
+
+    try {
+        if FileExist(TEST_WEBHOOK_FILE)
+            FileDelete TEST_WEBHOOK_FILE
+        FileAppend TEST_WEBHOOK_URL, TEST_WEBHOOK_FILE, "UTF-8"
+    } catch {
+        if (statusCtrl)
+            statusCtrl.Value := "⚠️ Saved in memory, but failed to write file."
+        return true
+    }
+
+    if (statusCtrl)
+        statusCtrl.Value := "✅ Saved!"
+    return true
+}
+
+TestWebhookPing() {
+    global TEST_WEBHOOK_URL, DISCORD_WEBHOOK, TEST_PING_USER_ID, TEST_PING_COUNT
+
+    ; Use custom test webhook if set, else fall back to main webhook
+    url := (TEST_WEBHOOK_URL != "" ? TEST_WEBHOOK_URL : DISCORD_WEBHOOK)
+
+    if (url = "") {
+        MsgBox "No webhook set. Press Ctrl+Shift+W to set a test webhook first.", "Webhook Test", "Icon!"
+        return
+    }
+
+    TEST_PING_COUNT += 1
+
+    msg :=
+        "<@" TEST_PING_USER_ID "> ✅ Webhook test ping #" TEST_PING_COUNT "`n"
+      . "Time: " FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss") "`n"
+      . "PC: " A_ComputerName " | User: " A_UserName
+
+    payload := '{ "content": "' JsonEscape(msg) '" }'
+
+    try {
+        http := ComObject("WinHttp.WinHttpRequest.5.1")
+        http.SetTimeouts(8000, 8000, 8000, 8000)
+        http.Open("POST", url, false)
+        http.SetRequestHeader("Content-Type", "application/json")
+        http.SetRequestHeader("User-Agent", "V1LN-Clan")
+        http.Send(payload)
+
+        ; Discord often returns 204 on success
+        if (http.Status = 204 || http.Status = 200) {
+            SoundBeep(900, 120)
+        } else {
+            MsgBox "Webhook returned status: " http.Status "`n" http.ResponseText, "Webhook Test Failed", "Icon!"
+        }
+    } catch as err {
+        MsgBox "Webhook error: " err.Message, "Webhook Test Error", "Icon!"
+    }
+}
+
+^+l::TestLoginWebhook()
+TestLoginWebhook() {
+    global TEST_WEBHOOK_URL
+
+    ; Use custom test webhook if set, otherwise uses the normal DISCORD_WEBHOOK
+
+}
+
+SendDiscordWebhook1_(webhookUrl, payloadJson, label := "webhook") {
+    logFile := A_Temp "\v1ln_webhook_debug.log"
+    FileAppend "`n==== " label " ====`n", logFile
+    FileAppend "URL=" webhookUrl "`n", logFile
+
+    if (webhookUrl = "" || !InStr(webhookUrl, "discord.com/api/webhooks/")) {
+        FileAppend "FAIL: url empty/invalid`n", logFile
+        return false
+    }
+
+    try {
+        http := ComObject("WinHttp.WinHttpRequest.5.1")
+        http.SetTimeouts(8000, 8000, 8000, 8000)
+        http.Open("POST", webhookUrl, false)
+        http.SetRequestHeader("Content-Type", "application/json")
+        http.SetRequestHeader("User-Agent", "V1LN-Clan")
+        http.Send(payloadJson)
+
+        FileAppend "Status=" http.Status "`n", logFile
+        try FileAppend "Resp=" http.ResponseText "`n", logFile
+
+        ; Discord success is usually 204 (No Content)
+        return (http.Status = 204 || http.Status = 200)
+    } catch as err {
+        FileAppend "EXCEPTION=" err.Message "`n", logFile
+        return false
+    }
+}
+EnsureDiscordWebhookLoaded() {
+    global DISCORD_WEBHOOK, MANIFEST_URL
+
+    if (DISCORD_WEBHOOK != "")
+        return DISCORD_WEBHOOK
+
+    tmp := A_Temp "\manifest_webhook.json"
+    if !SafeDownload(MANIFEST_URL, tmp, 20000)
+        return ""
+
+    try json := FileRead(tmp, "UTF-8")
+    catch
+        return ""
+
+    if RegExMatch(json, '"webhook"\s*:\s*"([^"]+)"', &m) {
+        DISCORD_WEBHOOK := StrReplace(m[1], "\/", "/")
+        return DISCORD_WEBHOOK
+    }
+    return ""
+}
+
+
+
+
+IsFirstRunUser_() {
+    global FIRST_LOGIN_TRACKER_FILE
+    try {
+        if FileExist(FIRST_LOGIN_TRACKER_FILE)
+            return false
+        ; mark as “seen” immediately so it won’t spam if the app crashes later
+        FileAppend FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss"), FIRST_LOGIN_TRACKER_FILE, "UTF-8"
+        return true
+    } catch {
+        ; if writing fails, treat as not-first to avoid spam
+        return false
+    }
 }
