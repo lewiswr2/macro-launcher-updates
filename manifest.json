@@ -8,13 +8,13 @@
   "cred_user": "V1LNClan@discord",
   "cred_password": "HDK74NXI89DJNZ23!CG44Z874g55Hf",
   "banned_discord_ids": [
-    "1247055057489231914"
+
   ],
   "admin_discord_ids": [
     "898236174039138304"
   ],
   "banned_hwids": [
-    "1525703921"
+
   ],
   "hwid_bindings": {
     "123123": "1525703921",
