@@ -7,9 +7,7 @@
   "webhook": "https://discord.com/api/webhooks/1467839252145504351/aOZh1pxaopB5NEnP17sT8cyO2FM6txMqeWtXPKa1_91x0XRfSjWVTQDo0L64cCBiHLtE",
   "cred_user": "V1LNClan@discord",
   "cred_password": "HDK74NXI89DJNZ23!CG44Z874g55Hf",
-  "banned_discord_ids": [
-    "1247055057489231914"
-  ],
+  "banned_discord_ids": [],
   "admin_discord_ids": [
     "898236174039138304"
   ],
