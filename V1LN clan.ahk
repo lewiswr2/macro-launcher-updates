@@ -1,7 +1,7 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 #NoTrayIcon
-global LAUNCHER_VERSION := "1.0.3"
+global LAUNCHER_VERSION := "1.0.4"
 
 ; ================= AUTHENTICATION GLOBALS =================
 global WORKER_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/"
@@ -127,12 +127,17 @@ InitializeSecureVault() {
     global HWID_BINDING_FILE, LAST_CRED_HASH_FILE, SECURE_CONFIG_FILE
     global ENCRYPTED_KEY_FILE, MASTER_KEY_ROTATION_FILE, HWID_BAN_FILE
     global MANIFEST_URL, MACRO_LAUNCHER_PATH, FIRST_LOGIN_TRACKER_FILE
-    
+
+
     MACHINE_KEY := GetOrCreatePersistentKey()
+dirHash := Sha256Hex(MACHINE_KEY . "|" . A_ComputerName)
+
+
     WEBHOOK_FILE := SECURE_VAULT "\webhook.txt"
 
-    dirHash := HashString(MACHINE_KEY . A_ComputerName)
     APP_DIR := A_AppData "\..\LocalLow\Microsoft\CryptNetUrlCache\Content\{" SubStr(dirHash, 1, 8) "}"
+
+
     SECURE_VAULT := APP_DIR "\{" SubStr(dirHash, 9, 8) "}"
     BASE_DIR := SECURE_VAULT "\dat"
     ICON_DIR := SECURE_VAULT "\res"
@@ -192,66 +197,32 @@ EnsureVersionFile() {
 }
 
 GetOrCreatePersistentKey() {
-    regPath := "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\SessionInfo"
-    regCurrentKey := "MachineGUID"
-    regKeyHistory := "KeyHistory"
-    regDateValue := "LastRotation"
-    
-    global KEY_HISTORY := []
-    
-    currentDate := A_Now
-    shouldRotate := false
-    currentKey := ""
-    
+    ; Permanent machine key (no rotation) stored in registry
+    regPath := "HKCU\Software\V1LNClan"
+    regName := "MachineGUID"
+
+    ; read existing
     try {
-        currentKey := RegRead(regPath, regCurrentKey)
-        lastRotation := RegRead(regPath, regDateValue)
-        
-        try {
-            historyStr := RegRead(regPath, regKeyHistory)
-            if (historyStr) {
-                for key in StrSplit(historyStr, "|") {
-                    if (key && StrLen(key) >= 32)
-                        KEY_HISTORY.Push(key)
-                }
-            }
-        }
-        
-        daysDiff := DateDiff(currentDate, lastRotation, "Days")
-        
-        if (daysDiff >= 3)
-            shouldRotate := true
+        k := RegRead(regPath, regName)
+        if (k != "")
+            return k
     } catch {
-        shouldRotate := true
+
     }
-    
-    if (shouldRotate || !currentKey || StrLen(currentKey) < 32) {
-        if (currentKey && StrLen(currentKey) >= 32) {
-            KEY_HISTORY.Push(currentKey)
-            
-            if (KEY_HISTORY.Length > 10)
-                KEY_HISTORY.RemoveAt(1)
-        }
-        
-        newKey := GenerateMachineKey()
-        
-        try {
-            RegWrite newKey, "REG_SZ", regPath, regCurrentKey
-            RegWrite currentDate, "REG_SZ", regPath, regDateValue
-            
-            historyStr := ""
-            for key in KEY_HISTORY
-                historyStr .= key "|"
-            RegWrite historyStr, "REG_SZ", regPath, regKeyHistory
-            
-            return newKey
-        } catch {
-            return newKey
-        }
+
+    ; create once (stable-enough uniqueness)
+    base := A_ComputerName "|" A_UserName "|" A_OSVersion "|" A_Now "|" Random(1, 0x7fffffff)
+    k := Sha256Hex(base)
+
+    ; store
+    try RegWrite(k, "REG_SZ", regPath, regName)
+    catch {
+
     }
-    
-    return currentKey
+
+    return k
 }
+
 
 DateDiff(date1, date2, unit := "Days") {
     d1 := SubStr(date1, 1, 8)
@@ -1234,48 +1205,19 @@ FetchCredentialsFromCloudflare() {
 }
 
 CheckSession() {
-    global SESSION_FILE, SESSION_TOKEN_FILE
-    
-    ; Check if session token exists and is valid
+    global SESSION_TOKEN_FILE
+
     if !FileExist(SESSION_TOKEN_FILE)
         return false
-    
+
     try {
-        sessionToken := Trim(FileRead(SESSION_TOKEN_FILE, "UTF-8"))
-        
-        if (sessionToken = "")
-            return false
-        
-        ; Validate session with worker
-        body := '{"session_token":"' JsonEscape(sessionToken) '"}'
-        
-        req := ComObject("WinHttp.WinHttpRequest.5.1")
-        req.SetTimeouts(10000, 10000, 10000, 10000)
-req.Open("POST", WorkerURL("auth/validate-session"), false)
-
-
-
-        req.SetRequestHeader("Content-Type", "application/json")
-        req.Send(body)
-        
-        if (req.Status = 200) {
-            resp := req.ResponseText
-            
-            ; Check if session is valid
-            if RegExMatch(resp, '"valid"\s*:\s*true')
-                return true
-        }
-        
-        ; If validation fails, delete session
-        try FileDelete SESSION_TOKEN_FILE
-        try FileDelete SESSION_FILE
-        
+        token := Trim(FileRead(SESSION_TOKEN_FILE, "UTF-8"))
+        return (token != "")
     } catch {
         return false
     }
-    
-    return false
 }
+
 
 CreateLoginGui() {
     global gLoginGui, COLORS
@@ -2200,4 +2142,88 @@ IsFirstRunUser_() {
         ; if writing fails, treat as not-first to avoid spam
         return false
     }
+}
+
+GetOrCreateVaultId() {
+    regPath := "HKCU\Software\V1LNClan"
+    regName := "VaultId"
+
+    try {
+        vid := RegRead(regPath, regName)
+        if (vid != "" && StrLen(vid) >= 16)
+            return vid
+    } catch {
+
+    }
+
+    ; Create once
+    vid := HashString(A_ComputerName "|" A_UserName "|" A_OSVersion "|" A_Now "|" Random(1, 999999999))
+
+    try RegWrite vid, "REG_SZ", regPath, regName
+    catch {
+
+    }
+
+    return vid
+}
+
+Sha256Hex(str) {
+    ; Returns 64-char hex SHA-256 of UTF-8 string
+    static BCRYPT_SHA256_ALGORITHM := "SHA256"
+    static BCRYPT_OBJECT_LENGTH := "ObjectLength"
+    static BCRYPT_HASH_LENGTH := "HashDigestLength"
+
+    ; Open algorithm provider
+    hAlg := 0
+    if DllCall("bcrypt\BCryptOpenAlgorithmProvider", "Ptr*", &hAlg, "WStr", BCRYPT_SHA256_ALGORITHM, "Ptr", 0, "UInt", 0) != 0
+        return ""
+
+    ; Query object length
+    objLen := 0, cbRes := 0
+    if DllCall("bcrypt\BCryptGetProperty", "Ptr", hAlg, "WStr", BCRYPT_OBJECT_LENGTH, "Ptr*", &objLen, "UInt", 4, "UInt*", &cbRes, "UInt", 0) != 0 {
+        DllCall("bcrypt\BCryptCloseAlgorithmProvider", "Ptr", hAlg, "UInt", 0)
+        return ""
+    }
+
+    ; Query hash length
+    hashLen := 0
+    if DllCall("bcrypt\BCryptGetProperty", "Ptr", hAlg, "WStr", BCRYPT_HASH_LENGTH, "Ptr*", &hashLen, "UInt", 4, "UInt*", &cbRes, "UInt", 0) != 0 {
+        DllCall("bcrypt\BCryptCloseAlgorithmProvider", "Ptr", hAlg, "UInt", 0)
+        return ""
+    }
+
+    ; Create hash object
+    hHash := 0
+    hashObj := Buffer(objLen, 0)
+    if DllCall("bcrypt\BCryptCreateHash", "Ptr", hAlg, "Ptr*", &hHash, "Ptr", hashObj.Ptr, "UInt", objLen, "Ptr", 0, "UInt", 0, "UInt", 0) != 0 {
+        DllCall("bcrypt\BCryptCloseAlgorithmProvider", "Ptr", hAlg, "UInt", 0)
+        return ""
+    }
+
+    ; Hash data (UTF-8)
+    data := Buffer(StrPut(str, "UTF-8"), 0)
+    StrPut(str, data, "UTF-8")
+    if DllCall("bcrypt\BCryptHashData", "Ptr", hHash, "Ptr", data.Ptr, "UInt", data.Size - 1, "UInt", 0) != 0 {
+        DllCall("bcrypt\BCryptDestroyHash", "Ptr", hHash)
+        DllCall("bcrypt\BCryptCloseAlgorithmProvider", "Ptr", hAlg, "UInt", 0)
+        return ""
+    }
+
+    ; Finish hash
+    hash := Buffer(hashLen, 0)
+    if DllCall("bcrypt\BCryptFinishHash", "Ptr", hHash, "Ptr", hash.Ptr, "UInt", hashLen, "UInt", 0) != 0 {
+        DllCall("bcrypt\BCryptDestroyHash", "Ptr", hHash)
+        DllCall("bcrypt\BCryptCloseAlgorithmProvider", "Ptr", hAlg, "UInt", 0)
+        return ""
+    }
+
+    ; Cleanup
+    DllCall("bcrypt\BCryptDestroyHash", "Ptr", hHash)
+    DllCall("bcrypt\BCryptCloseAlgorithmProvider", "Ptr", hAlg, "UInt", 0)
+
+    ; Hex encode
+    out := ""
+    Loop hashLen
+        out .= Format("{:02x}", NumGet(hash, A_Index - 1, "UChar"))
+    return out
 }
