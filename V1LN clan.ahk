@@ -6,7 +6,7 @@ global LAUNCHER_VERSION := "1.0.4"
 ; ================= AUTHENTICATION GLOBALS =================
 global WORKER_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/"
 global DISCORD_URL := "https://discord.gg/V1ln"
-
+Msgbox "hello"
 ; Credential & Session Files
 global CRED_FILE := ""
 global SESSION_FILE := ""
