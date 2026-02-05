@@ -2,7 +2,8 @@
 #SingleInstance Force
 #NoTrayIcon
 
-global LAUNCHER_VERSION := "1.0.3"
+global MACRO_LAUNCHER_VERSION := "1.3.2"
+
 
 global WORKER_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/"
 global DISCORD_URL := "https://discord.gg/v1ln"
