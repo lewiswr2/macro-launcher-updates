@@ -1,12 +1,13 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 #NoTrayIcon
-global LAUNCHER_VERSION := "1.0.4"
+global LAUNCHER_VERSION := "1.0.0"
 
 ; ================= AUTHENTICATION GLOBALS =================
 global WORKER_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/"
 global DISCORD_URL := "https://discord.gg/V1ln"
-Msgbox "hello"
+TestAuthConnection()
+
 ; Credential & Session Files
 global CRED_FILE := ""
 global SESSION_FILE := ""
@@ -25,6 +26,7 @@ global TEST_PING_USER_ID := "898236174039138304"
 global TEST_WEBHOOK_FILE := ""      ; set after vault init
 global TEST_WEBHOOK_URL := ""       ; cached in memory
 global TEST_PING_COUNT := 0
+global VAULT_ID_FILE := ""
 
 ; Master Credentials
 global MASTER_KEY := ""
@@ -71,7 +73,9 @@ global COLORS := {
 ^+p::TestWebhookPing()
 
 ; =========================================
+CheckLoginAppUpdate()
 InitializeSecureVault()
+CheckLoginAppUpdate()
 InitTestWebhookStorage()
 
 SetTaskbarIcon()
@@ -120,72 +124,104 @@ return
 
 ; ============= SECURITY FUNCTIONS =============
 
+
+; ============= SECURITY FUNCTIONS =============
+
 InitializeSecureVault() {
     global APP_DIR, SECURE_VAULT, BASE_DIR, ICON_DIR, VERSION_FILE, MACHINE_KEY
-    global CRED_FILE, SESSION_FILE, SESSION_TOKEN_FILE, DISCORD_ID_FILE, DISCORD_BAN_FILE
-    global ADMIN_DISCORD_FILE, SESSION_LOG_FILE, MACHINE_BAN_FILE
-    global HWID_BINDING_FILE, LAST_CRED_HASH_FILE, SECURE_CONFIG_FILE
-    global ENCRYPTED_KEY_FILE, MASTER_KEY_ROTATION_FILE, HWID_BAN_FILE
-    global MANIFEST_URL, MACRO_LAUNCHER_PATH, FIRST_LOGIN_TRACKER_FILE
-
-
+    global DISCORD_ID_FILE, DISCORD_BAN_FILE, ADMIN_DISCORD_FILE
+    global HWID_BINDING_FILE, HWID_BAN_FILE, MACHINE_BAN_FILE
+    global MANIFEST_URL, MACRO_LAUNCHER_PATH, SESSION_TOKEN_FILE, USERNAME_FILE, ACCESS_KEY_FILE
+    
     MACHINE_KEY := GetOrCreatePersistentKey()
-dirHash := Sha256Hex(MACHINE_KEY . "|" . A_ComputerName)
-
-
-    WEBHOOK_FILE := SECURE_VAULT "\webhook.txt"
-
+    
+    dirHash := HashString(MACHINE_KEY . A_ComputerName)
     APP_DIR := A_AppData "\..\LocalLow\Microsoft\CryptNetUrlCache\Content\{" SubStr(dirHash, 1, 8) "}"
-
-
     SECURE_VAULT := APP_DIR "\{" SubStr(dirHash, 9, 8) "}"
     BASE_DIR := SECURE_VAULT "\dat"
     ICON_DIR := SECURE_VAULT "\res"
     VERSION_FILE := SECURE_VAULT "\~ver.tmp"
     MANIFEST_URL := DecryptManifestUrl()
     
-    ; Set MacroLauncher path (hidden in secure vault)
+    ; Set file paths - ALL IN SECURE_VAULT
     MACRO_LAUNCHER_PATH := SECURE_VAULT "\MacroLauncher.ahk"
-    
-    CRED_FILE := SECURE_VAULT "\.sysauth"
-    SESSION_FILE := SECURE_VAULT "\.session"
-    SESSION_TOKEN_FILE := SECURE_VAULT "\.session_token"  ; Added
+    SESSION_TOKEN_FILE := SECURE_VAULT "\.session_token"
     DISCORD_ID_FILE := SECURE_VAULT "\discord_id.txt"
+    USERNAME_FILE := SECURE_VAULT "\username.txt"
+    ACCESS_KEY_FILE := SECURE_VAULT "\.access_key"  ; ✅ NOW IN SECURE_VAULT
     DISCORD_BAN_FILE := SECURE_VAULT "\banned_discord_ids.txt"
     ADMIN_DISCORD_FILE := SECURE_VAULT "\admin_discord_ids.txt"
-    SESSION_LOG_FILE := SECURE_VAULT "\sessions.log"
+    HWID_BAN_FILE := SECURE_VAULT "\banned_hwids.txt"
     MACHINE_BAN_FILE := SECURE_VAULT "\.machine_banned"
     HWID_BINDING_FILE := SECURE_VAULT "\.hwid_bind"
-    LAST_CRED_HASH_FILE := SECURE_VAULT "\.last_cred_hash"
-    SECURE_CONFIG_FILE := SECURE_VAULT "\.secure_config"
-    ENCRYPTED_KEY_FILE := SECURE_VAULT "\.enckey"
-    MASTER_KEY_ROTATION_FILE := SECURE_VAULT "\.key_rotation"
-    HWID_BAN_FILE := SECURE_VAULT "\banned_hwids.txt"
-    FIRST_LOGIN_TRACKER_FILE := SECURE_VAULT "\.first_login_tracker"  ; NEW: Track users who have logged in before
-    
+
+    ; ========== IMPROVED: Create all directories with better error handling ==========
     try {
-        DirCreate APP_DIR
-        DirCreate SECURE_VAULT
-        DirCreate BASE_DIR
-        DirCreate ICON_DIR
+        ; Create main directories
+        if !DirExist(APP_DIR)
+            DirCreate APP_DIR
         
-        RunWait 'attrib +h +s +r "' APP_DIR '"', , "Hide"
-        RunWait 'attrib +h +s +r "' SECURE_VAULT '"', , "Hide"
-        RunWait 'attrib +h +s +r "' BASE_DIR '"', , "Hide"
-        RunWait 'attrib +h +s +r "' ICON_DIR '"', , "Hide"
+        if !DirExist(SECURE_VAULT)
+            DirCreate SECURE_VAULT
         
-        RunWait 'icacls "' SECURE_VAULT '" /inheritance:r /grant:r "' A_UserName '":F', , "Hide"
+        if !DirExist(BASE_DIR)
+            DirCreate BASE_DIR
+        
+        if !DirExist(ICON_DIR)
+            DirCreate ICON_DIR
+        
+        ; Hide directories (non-critical, don't fail if errors)
+        try {
+            RunWait 'attrib +h +s +r "' APP_DIR '"', , "Hide"
+            RunWait 'attrib +h +s +r "' SECURE_VAULT '"', , "Hide"
+            RunWait 'attrib +h +s +r "' BASE_DIR '"', , "Hide"
+            RunWait 'attrib +h +s +r "' ICON_DIR '"', , "Hide"
+        } catch {
+            ; Ignore attribute errors
+        }
+        
+        ; Set permissions (non-critical)
+        try {
+            RunWait 'icacls "' SECURE_VAULT '" /inheritance:r /grant:r "' A_UserName '":F', , "Hide"
+        } catch {
+            ; Ignore permission errors
+        }
+        
     } catch as err {
-        MsgBox "Failed to initialize secure vault: " err.Message, "Security Error", "Icon!"
-        ExitApp
+        MsgBox(
+            "Failed to initialize secure vault:`n`n"
+            . err.Message "`n`n"
+            . "Path: " SECURE_VAULT "`n`n"
+            . "The application may not work correctly.",
+            "Initialization Error",
+            "Icon!"
+        )
     }
     
     EnsureVersionFile()
-    LoadSecureConfig()
     
     ; Extract MacroLauncher if it doesn't exist
     if !FileExist(MACRO_LAUNCHER_PATH) {
         ExtractMacroLauncher()
+        LoadWebhookUrl()
+    }
+}
+LoadWebhookUrl() {
+    global WEBHOOK_URL, MANIFEST_URL
+    
+    try {
+        tmpManifest := A_Temp "\manifest_webhook.json"
+        
+        if SafeDownload(MANIFEST_URL, tmpManifest, 10000) {
+            json := FileRead(tmpManifest, "UTF-8")
+            
+            if RegExMatch(json, '"webhook_url"\s*:\s*"([^"]+)"', &m) {
+                WEBHOOK_URL := Trim(m[1])
+            }
+            
+            try FileDelete tmpManifest
+        }
+    } catch {
     }
 }
 
@@ -195,35 +231,67 @@ EnsureVersionFile() {
         try FileAppend "0", VERSION_FILE
     }
 }
-
 GetOrCreatePersistentKey() {
-    ; Permanent machine key (no rotation) stored in registry
-    regPath := "HKCU\Software\V1LNClan"
-    regName := "MachineGUID"
-
-    ; read existing
+    regPath := "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\SessionInfo"
+    regCurrentKey := "MachineGUID"
+    regKeyHistory := "KeyHistory"
+    regDateValue := "LastRotation"
+    
+    global KEY_HISTORY := []
+    
+    currentDate := A_Now
+    shouldRotate := false
+    currentKey := ""
+    
     try {
-        k := RegRead(regPath, regName)
-        if (k != "")
-            return k
+        currentKey := RegRead(regPath, regCurrentKey)
+        lastRotation := RegRead(regPath, regDateValue)
+        
+        try {
+            historyStr := RegRead(regPath, regKeyHistory)
+            if (historyStr) {
+                for key in StrSplit(historyStr, "|") {
+                    if (key && StrLen(key) >= 32)
+                        KEY_HISTORY.Push(key)
+                }
+            }
+        }
+        
+        daysDiff := DateDiff(currentDate, lastRotation, "Days")
+        
+        if (daysDiff >= 3)
+            shouldRotate := true
     } catch {
-
+        shouldRotate := true
     }
-
-    ; create once (stable-enough uniqueness)
-    base := A_ComputerName "|" A_UserName "|" A_OSVersion "|" A_Now "|" Random(1, 0x7fffffff)
-    k := Sha256Hex(base)
-
-    ; store
-    try RegWrite(k, "REG_SZ", regPath, regName)
-    catch {
-
+    
+    if (shouldRotate || !currentKey || StrLen(currentKey) < 32) {
+        if (currentKey && StrLen(currentKey) >= 32) {
+            KEY_HISTORY.Push(currentKey)
+            
+            if (KEY_HISTORY.Length > 10)
+                KEY_HISTORY.RemoveAt(1)
+        }
+        
+        newKey := GenerateMachineKey()
+        
+        try {
+            RegWrite newKey, "REG_SZ", regPath, regCurrentKey
+            RegWrite currentDate, "REG_SZ", regPath, regDateValue
+            
+            historyStr := ""
+            for key in KEY_HISTORY
+                historyStr .= key "|"
+            RegWrite historyStr, "REG_SZ", regPath, regKeyHistory
+            
+            return newKey
+        } catch {
+            return newKey
+        }
     }
-
-    return k
+    
+    return currentKey
 }
-
-
 DateDiff(date1, date2, unit := "Days") {
     d1 := SubStr(date1, 1, 8)
     d2 := SubStr(date2, 1, 8)
@@ -1098,6 +1166,35 @@ DebugBanCheck() {
 ; WORKER API HELPER FUNCTIONS
 ; ===============================================================
 
+FetchManifest() {
+    global MANIFEST_URL
+
+    tmp := A_Temp "\manifest_login.json"
+    try FileDelete tmp
+
+    ; Cache-bust so GitHub/CDN doesn’t hand you stale data
+    url := NoCacheUrl(MANIFEST_URL)
+
+    try {
+        if !SafeDownload(url, tmp, 20000)
+            return { success:false, error:"SafeDownload failed", url:url }
+
+        json := FileRead(tmp, "UTF-8")
+
+        if (json = "" || !InStr(json, "{"))
+            return { success:false, error:"Manifest empty/invalid", url:url, body:SubStr(json,1,200) }
+
+        return { success:true, status:200, json:json }
+    } catch as e {
+        return { success:false, error:e.Message, lasterror:A_LastError, url:url }
+    }
+}
+
+
+
+
+
+
 WorkerPostPublic(endpoint, bodyJson) {
     global WORKER_URL
     
@@ -1168,6 +1265,31 @@ SafeOpenURL(url) {
 
 ; ============= LOGIN & SESSION MANAGEMENT =============
 
+FetchCredentialsFromManifest() {
+    m := FetchManifest()
+    if (!m.success)
+        return {username:"", password:"", success:false
+              , error:(m.HasOwnProp("error") ? m.error : "Manifest fetch failed")
+              , status:(m.HasOwnProp("status") ? m.status : "")
+              , body:(m.HasOwnProp("body") ? m.body : "")}
+
+    json := m.json
+
+    ; ✅ Match your manifest keys
+    username := "", password := ""
+    if RegExMatch(json, '"cred_user"\s*:\s*"([^"]*)"', &u)
+        username := u[1]
+    if RegExMatch(json, '"cred_password"\s*:\s*"([^"]*)"', &p)
+        password := p[1]
+
+    ok := (username != "" && password != "")
+    return {username:username, password:password, success:ok
+          , error:(ok ? "" : "Manifest missing cred_user/cred_password")}
+}
+
+
+
+
 FetchCredentialsFromCloudflare() {
     global WORKER_URL
     
@@ -1203,6 +1325,7 @@ FetchCredentialsFromCloudflare() {
     
     return {username: "", password: "", success: false}
 }
+
 
 CheckSession() {
     global SESSION_TOKEN_FILE
@@ -1268,13 +1391,24 @@ HandleLogin(userEdit, passEdit, status) {
     status.Value := "⏳ Fetching credentials from server..."
     
     ; Fetch valid credentials from Cloudflare
-    validCreds := FetchCredentialsFromCloudflare()
-    
-    if !validCreds.success {
-        status.Value := "❌ Failed to connect to authentication server"
-        SoundBeep(700, 120)
-        return
-    }
+   validCreds := FetchCredentialsFromManifest()
+
+if !validCreds.success {
+    msg := "❌ Auth fetch failed"
+    if validCreds.HasOwnProp("status") && validCreds.status != ""
+        msg .= " (HTTP " validCreds.status ")"
+    if validCreds.HasOwnProp("error") && validCreds.error != ""
+        msg .= "`n" validCreds.error
+    if validCreds.HasOwnProp("body") && validCreds.body != ""
+        msg .= "`n" SubStr(validCreds.body, 1, 160)
+
+    status.Value := msg
+    SoundBeep(700, 120)
+    return
+}
+
+
+
     
     ; Check if entered credentials match
     if (username != validCreds.username || password != validCreds.password) {
@@ -2145,27 +2279,35 @@ IsFirstRunUser_() {
 }
 
 GetOrCreateVaultId() {
-    regPath := "HKCU\Software\V1LNClan"
-    regName := "VaultId"
+    global VAULT_ID_FILE
 
     try {
-        vid := RegRead(regPath, regName)
-        if (vid != "" && StrLen(vid) >= 16)
-            return vid
+        if (VAULT_ID_FILE != "" && FileExist(VAULT_ID_FILE)) {
+            vid := Trim(FileRead(VAULT_ID_FILE, "UTF-8"))
+            if (vid != "" && StrLen(vid) >= 16)
+                return vid
+        }
     } catch {
 
     }
 
-    ; Create once
-    vid := HashString(A_ComputerName "|" A_UserName "|" A_OSVersion "|" A_Now "|" Random(1, 999999999))
+    ; create once
+    vid := Sha256Hex(A_ComputerName "|" A_UserName "|" A_OSVersion "|" A_Now "|" Random(1, 0x7fffffff))
 
-    try RegWrite vid, "REG_SZ", regPath, regName
-    catch {
+    ; save into the SAME vault folder
+    try {
+        if (VAULT_ID_FILE != "" ) {
+            if FileExist(VAULT_ID_FILE)
+                FileDelete VAULT_ID_FILE
+            FileAppend vid, VAULT_ID_FILE, "UTF-8"
+        }
+    } catch {
 
     }
 
     return vid
 }
+
 
 Sha256Hex(str) {
     ; Returns 64-char hex SHA-256 of UTF-8 string
@@ -2226,4 +2368,197 @@ Sha256Hex(str) {
     Loop hashLen
         out .= Format("{:02x}", NumGet(hash, A_Index - 1, "UChar"))
     return out
+}
+
+CheckLoginAppUpdate() {
+    global LAUNCHER_VERSION, MANIFEST_URL
+    
+    try {
+        ; Download manifest with cache-busting
+        tmpManifest := A_Temp "\manifest_update_check_" A_TickCount ".json"
+        
+        if !SafeDownload(NoCacheUrl(MANIFEST_URL), tmpManifest, 15000) {
+            return  ; Silently fail - don't block app launch
+        }
+        
+        ; Parse manifest
+        json := ""
+        try {
+            json := FileRead(tmpManifest, "UTF-8")
+        } catch {
+            try FileDelete tmpManifest
+            return
+        }
+        
+        ; Extract launcher_version and login_url
+        manifestVersion := ""
+        loginUrl := ""
+        
+        if RegExMatch(json, '"launcher_version"\s*:\s*"([^"]+)"', &v) {
+            manifestVersion := Trim(v[1])
+        }
+        
+        if RegExMatch(json, '"login_url"\s*:\s*"([^"]+)"', &u) {
+            loginUrl := Trim(u[1])
+        }
+        
+        ; Cleanup manifest
+        try FileDelete tmpManifest
+        
+        ; Check if update needed
+        if (manifestVersion = "" || loginUrl = "") {
+            return  ; Missing data, skip update
+        }
+        
+        if (VersionCompare(manifestVersion, LAUNCHER_VERSION) <= 0) {
+            return  ; Already up to date
+        }
+        
+        ; ===== UPDATE AVAILABLE =====
+        choice := MsgBox(
+            "📄 Login App Update Available!`n`n"
+            . "Current: v" LAUNCHER_VERSION "`n"
+            . "Latest: v" manifestVersion "`n`n"
+            . "Update now? (Recommended)",
+            "AHK Vault - Update Available",
+            "YesNo Iconi"
+        )
+        
+        if (choice = "No") {
+            return
+        }
+        
+        ; Download new version with cache-busting
+        tmpUpdate := A_Temp "\AHK_Vault_Login_Update_" A_TickCount ".ahk"
+        
+        ToolTip "Downloading update v" manifestVersion "..."
+        
+        if !SafeDownload(NoCacheUrl(loginUrl), tmpUpdate, 30000) {
+            ToolTip
+            MsgBox "Update download failed. Continuing with current version.", "Update Failed", "Icon!"
+            return
+        }
+        
+        ToolTip
+        
+        ; Validate downloaded file
+        try {
+            content := FileRead(tmpUpdate, "UTF-8")
+            
+            if (StrLen(content) < 1000) {
+                throw Error("Downloaded file too small")
+            }
+            
+            if (!InStr(content, "#Requires AutoHotkey v2.0")) {
+                throw Error("Not a valid AHK v2 script")
+            }
+            
+            if (!InStr(content, "LAUNCHER_VERSION")) {
+                throw Error("Not the login app")
+            }
+            
+            ; Verify the downloaded version matches manifest
+            if RegExMatch(content, 'LAUNCHER_VERSION\s*:=\s*"([^"]+)"', &dlv) {
+                if (Trim(dlv[1]) != manifestVersion) {
+                    throw Error("Version mismatch - downloaded v" dlv[1] " but expected v" manifestVersion)
+                }
+            }
+            
+        } catch as err {
+            MsgBox "Update validation failed: " err.Message "`n`nContinuing with current version.", "Update Failed", "Icon!"
+            try FileDelete tmpUpdate
+            return
+        }
+        
+        ; ===== APPLY UPDATE =====
+        ApplyLoginUpdate(tmpUpdate, manifestVersion)
+        
+    } catch as err {
+        ; Silent fail - don't interrupt app launch
+    }
+}
+
+ApplyLoginUpdate(updateFile, newVersion) {
+    global LAUNCHER_VERSION
+    
+    try {
+        currentScript := A_ScriptFullPath
+        
+        ; Create batch file to replace script and restart
+        batFile := A_Temp "\update_login_" A_TickCount ".bat"
+        batContent := '@echo off'
+                   . '`necho Updating AHK Vault Login...'
+                   . '`ntimeout /t 2 /nobreak >nul'
+                   . '`n:RETRY'
+                   . '`ncopy /y "' updateFile '" "' currentScript '"'
+                   . '`nif errorlevel 1 ('
+                   . '`n    timeout /t 1 /nobreak >nul'
+                   . '`n    goto RETRY'
+                   . '`n)'
+                   . '`ntimeout /t 1 /nobreak >nul'
+                   . '`nstart "" "' A_AhkPath '" "' currentScript '"'
+                   . '`ntimeout /t 2 /nobreak >nul'
+                   . '`ndel "' updateFile '"'
+                   . '`ndel "%~f0"'
+        
+        if FileExist(batFile)
+            FileDelete batFile
+        FileAppend batContent, batFile
+        
+        ; Show update message
+        MsgBox (
+            "✅ Update downloaded successfully!`n`n"
+            . "The app will restart now to apply the update.`n`n"
+            . "Current: v" LAUNCHER_VERSION "`n"
+            . "New: v" newVersion
+        ), "Update Ready", "Iconi T3000"
+        
+        ; Run update batch and exit
+        Run batFile, , "Hide"
+        ExitApp
+        
+    } catch as err {
+        MsgBox "Failed to apply update: " err.Message "`n`nContinuing with current version.", "Update Failed", "Icon!"
+        
+        ; Cleanup
+        try FileDelete updateFile
+        try FileDelete batFile
+    }
+}
+
+NoCacheUrl(url) {
+    separator := InStr(url, "?") ? "&" : "?"
+    ; Use timestamp + random to prevent caching
+    return url . separator . "nocache=" . A_TickCount . "&rand=" . Random(1000, 9999)
+}
+
+
+TestAuthConnection() {
+    url := WorkerURL("get-credentials")
+
+    try {
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(5000, 5000, 5000, 15000)
+        req.Open("POST", url, false)
+
+        req.SetRequestHeader("Content-Type", "application/json")
+        req.SetRequestHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AHKAuthClient/1.0")
+
+        req.Send("{}")
+
+        MsgBox "CONNECTED`nHTTP: " req.Status "`n`n" SubStr(req.ResponseText, 1, 400)
+    } catch as e {
+        MsgBox "FAILED BEFORE RESPONSE`nError: " e.Message "`nA_LastError: " A_LastError
+    }
+}
+
+DescribeHttpFailure(tag, req) {
+    s := "❌ " tag
+    try s .= " (HTTP " req.Status ")"
+    try {
+        body := req.ResponseText
+        if (body != "")
+            s .= ": " SubStr(StrReplace(body, "`r", ""), 1, 160)
+    }
+    return s
 }
