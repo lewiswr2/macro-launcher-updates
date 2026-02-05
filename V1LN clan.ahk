@@ -1,7 +1,7 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 #NoTrayIcon
-global LAUNCHER_VERSION := "1.0.0"
+global LAUNCHER_VERSION := "1.0.4"
 
 ; ================= AUTHENTICATION GLOBALS =================
 global WORKER_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/"
