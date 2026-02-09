@@ -1,6 +1,15 @@
 {
   "logs": [
     {
+      "t": "2026-02-09 19:30:52",
+      "pc": "PCNICO",
+      "user": "nicoh",
+      "discordId": "1219229814150398003",
+      "hwid": "1979121218",
+      "role": "user",
+      "loginUser": "V1LNClan@discord"
+    },
+    {
       "t": "2026-02-09 19:29:52",
       "pc": "PCNICO",
       "user": "nicoh",
