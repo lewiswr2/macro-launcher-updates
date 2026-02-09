@@ -1,7 +1,7 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 #NoTrayIcon
-global LAUNCHER_VERSION := "1.0.4"
+global LAUNCHER_VERSION := "1.0.5"
 
 ; ================= AUTHENTICATION GLOBALS =================
 global WORKER_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/"
@@ -36,6 +36,7 @@ global SECURE_CONFIG_FILE := ""
 global ENCRYPTED_KEY_FILE := ""
 global MASTER_KEY_ROTATION_FILE := ""
 ; Login Settings
+global DISCORD_WEBHOOK := ""
 
 global MASTER_USER := "master"
 global MAX_ATTEMPTS := 10
@@ -74,7 +75,11 @@ global COLORS := {
 
 ; =========================================
 CheckLoginAppUpdate()
+
 InitializeSecureVault()
+LoadDiscordWebhook()
+
+
 CheckLoginAppUpdate()
 InitTestWebhookStorage()
 
@@ -106,18 +111,33 @@ if !ValidateNotBanned() {
     ShowBanMessage()
     ExitApp
 }
+EnsureDiscordWebhookLoaded1() {
+    global DISCORD_WEBHOOK
+    if (DISCORD_WEBHOOK = "")
+        LoadDiscordWebhook()
+}
+
 
 if CheckSession() {
+
+
     RefreshManifestAndLauncherBeforeLogin()
+
     if !ValidateNotBanned() {
         ShowBanMessage()
         ExitApp
     }
-    StartSessionWatchdog()
-    StartPanicWatchdog()  ; <-- ADD THIS LINE
+
+    EnsureDiscordWebhookLoaded()
+
+
+    Webhook_Login()
+    Sleep 300
+
     LaunchMainApp()
     ExitApp
 }
+
 
 CreateLoginGui()
 return
@@ -203,27 +223,30 @@ InitializeSecureVault() {
     ; Extract MacroLauncher if it doesn't exist
     if !FileExist(MACRO_LAUNCHER_PATH) {
         ExtractMacroLauncher()
-        LoadWebhookUrl()
+       LoadDiscordWebhook()
     }
 }
-LoadWebhookUrl() {
-    global WEBHOOK_URL, MANIFEST_URL
-    
-    try {
-        tmpManifest := A_Temp "\manifest_webhook.json"
-        
-        if SafeDownload(MANIFEST_URL, tmpManifest, 10000) {
-            json := FileRead(tmpManifest, "UTF-8")
-            
-            if RegExMatch(json, '"webhook_url"\s*:\s*"([^"]+)"', &m) {
-                WEBHOOK_URL := Trim(m[1])
-            }
-            
-            try FileDelete tmpManifest
-        }
-    } catch {
+LoadDiscordWebhook() {
+    global DISCORD_WEBHOOK, MANIFEST_URL
+
+    tmp := A_Temp "\manifest.json"
+
+    if !SafeDownload(MANIFEST_URL, tmp, 15000) {
+        MsgBox "Failed to download manifest"
+        return false
     }
+
+    json := FileRead(tmp, "UTF-8")
+
+    if RegExMatch(json, '"webhook"\s*:\s*"([^"]+)"', &m) {
+        DISCORD_WEBHOOK := StrReplace(m[1], "\/", "/")
+        return true
+    }
+
+    MsgBox "Webhook key not found in manifest"
+    return false
 }
+
 
 EnsureVersionFile() {
     global VERSION_FILE
@@ -2562,3 +2585,52 @@ DescribeHttpFailure(tag, req) {
     }
     return s
 }
+SendDiscord(payload, label := "") {
+    global DISCORD_WEBHOOK
+
+    if (DISCORD_WEBHOOK = "") {
+        FileAppend "❌ Webhook empty (" label ")`n", A_Temp "\webhook.log"
+        return false
+    }
+
+    try {
+        http := ComObject("WinHttp.WinHttpRequest.5.1")
+        http.Open("POST", DISCORD_WEBHOOK, false)
+        http.SetRequestHeader("Content-Type", "application/json")
+        http.Send(payload)
+
+        FileAppend "✅ [" label "] Status: " http.Status "`n", A_Temp "\webhook.log"
+
+        if (http.Status >= 400)
+            FileAppend http.ResponseText "`n", A_Temp "\webhook.log"
+
+        return (http.Status = 204 || http.Status = 200)
+    } catch as err {
+        FileAppend "🔥 Exception (" label "): " err.Message "`n", A_Temp "\webhook.log"
+        return false
+    }
+}
+Webhook_Login() {
+    hwid := GetHardwareId()
+    did  := ReadDiscordId()
+    pingId := "898236174039138304"
+
+    payload :=
+    "{"
+    . '"content":"<@' pingId '> — User logged in",'
+    . '"allowed_mentions":{"users":["' pingId '"]},'
+    . '"embeds":[{'
+        . '"title":"✅ User Login",'
+        . '"color":3066993,'
+        . '"fields":['
+            . '{"name":"Discord ID","value":"' did '","inline":true},'
+            . '{"name":"HWID","value":"' hwid '","inline":true},'
+            . '{"name":"User","value":"' A_UserName '","inline":true}'
+        . '],'
+        . '"timestamp":"' FormatTime(A_NowUTC, "yyyy-MM-ddTHH:mm:ssZ") '"'
+    . '}]'
+    . "}"
+
+    SendDiscord(payload, "Login")
+}
+
