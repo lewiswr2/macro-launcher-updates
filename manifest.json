@@ -5,14 +5,15 @@
   "master_key": "f7A9ZQm2K8X4L6R5B1H0WJYdU3eTVCNPaSgM8q2Fr6KZ9XH1BaC5R7T9WQ42ZKX6B8YHM3J0PFDmLS1qNfVUgErA8C7ZK2X9FQ6A0C2MRY7Z4KX8B5HJPW3dTgmL1NSEfVqU6RZ8A9C0X7C2Q9Z6ARB5H8K0M4YWJdTg3PFLSN1VfEUqZ9A6C7R2XM9C0F2ZQ7R6A8X5KHB4YWTJPd3gS1NfELVqUZ7A9C2R6XQZ7A9C2R6XM5K8HB4YWJTd3gPFS1NfELVqU0C9A7R2Z6X",
   "webhook": "https://discord.com/api/webhooks/1469429493599965459/6JrZAN8U4oct2ZaRc8ujU2Kgm3Jm-a03yHsWWObwMZwsVp_ppPE3p_j3GqPd6UM63XwI",
   "launcher_url": "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/MacroLauncher.ahk",
-
   "login_url": "https://raw.githubusercontent.com/lewiswr2/macro-launcher-updates/main/V1LN%20clan.ahk",
-
-
   "cred_user": "V1LNClan@discord",
   "cred_password": "HDK74NXI89DJNZ23!CG44Z874g55Hf",
-  "banned_discord_ids": [],
-  "admin_discord_ids": ["898236174039138304"],
+  "banned_discord_ids": [
+    "1247055057489231914"
+  ],
+  "admin_discord_ids": [
+    "898236174039138304"
+  ],
   "banned_hwids": [],
   "hwid_bindings": {
     "123123": "1525703921",
@@ -40,10 +41,13 @@
     "498122354095030284": "590825412",
     "1050876617485991977": "132969879"
   },
-  "changelog": ["NEW MACRO'S ADDED:", "LEVEL UP MODE!!!", "ANTI AFK!!!"],
+  "changelog": [
+    "NEW MACRO'S ADDED:",
+    "LEVEL UP MODE!!!",
+    "ANTI AFK!!!"
+  ],
   "panic_mode": false,
   "panic_reason": "",
   "panic_activated_at": "2026-01-26T06:25:54.820Z",
   "panic_deactivated_at": "2026-01-26T06:27:35.683Z"
 }
-
