@@ -1265,6 +1265,9 @@ ReadMacroInfo(macroDir) {
 }
 
 ; 1. ADD THIS FUNCTION (from Public Release)
+; ----------------------
+; Set global password (auto push)
+; ----------------------
 OnSetGlobalPassword(defaultUser, *) {
     pw := InputBox("Enter NEW universal password (this pushes to global manifest).", "V1LN Clan - Set Global Password", "Password w560 h190")
     if (pw.Result != "OK")
@@ -1276,37 +1279,23 @@ OnSetGlobalPassword(defaultUser, *) {
         return
     }
 
-    h := HashPassword(newPass)
-    body := '{"cred_user":"' defaultUser '","cred_hash":"' h '"}'
+    ; Send plaintext password to worker
+    body := '{"cred_user":"' defaultUser '","cred_password":"' newPass '"}'
 
     try {
         WorkerPost("/cred/set", body)
-        MsgBox "✅ Global password updated in manifest.`n`nNew cred_hash: " h, "V1LN Clan", "Iconi"
+        MsgBox "✅ Global password updated in manifest.`n`nNew cred_password: " newPass, "V1LN Clan", "Iconi"
     } catch as err {
         MsgBox "❌ Failed to set global password:`n" err.Message, "V1LN Clan", "Icon! 0x10"
     }
 }
 
-; 2. ADD THIS FUNCTION (from Public Release)
-HashPassword(password) {
-    salt := "V1LN_CLAN_2026_SECURE"
-    combined := salt . password . salt
-    
-    hash := 0
-    Loop Parse combined
-        hash := Mod(hash * 31 + Ord(A_LoopField), 2147483647)
-    
-    Loop 10000 {
-        hash := Mod(hash * 37 + Ord(SubStr(password, Mod(A_Index, StrLen(password)) + 1, 1)), 2147483647)
-    }
-    
-    return hash
-}
-
-; 3. ADD THIS FUNCTION (from Public Release)
+; ----------------------
+; Copy snippet (optional)
+; ----------------------
 CopyManifestCredentialSnippet(username) {
     pw := InputBox(
-        "Enter the NEW universal password.`n`nThis will copy cred_user + cred_hash for manifest.json.",
+        "Enter the NEW universal password.`n`nThis will copy cred_user + cred_password for manifest.json.",
         "V1LN Clan - Generate manifest snippet",
         "Password w560 h190"
     )
@@ -1319,13 +1308,11 @@ CopyManifestCredentialSnippet(username) {
         return
     }
 
-    h := HashPassword(newPass)
-    snippet := '"cred_user": "' username '",' "`n" '"cred_hash": "' h '"'
+    snippet := '"cred_user": "' username '",' "`n" '"cred_password": "' newPass '"'
     A_Clipboard := snippet
 
     MsgBox "✅ Copied to clipboard.`n`nPaste into manifest.json:`n`n" snippet, "V1LN Clan", "Iconi"
 }
-
 RunMacro(path) {
     if !FileExist(path) {
         MsgBox "Macro not found:`n" path, "Error", "Icon!"

@@ -1,7 +1,7 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 #NoTrayIcon
-global LAUNCHER_VERSION := "1.0.6"
+global LAUNCHER_VERSION := "1.0.7"
 
 ; ================= AUTHENTICATION GLOBALS =================
 global WORKER_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/"
@@ -27,7 +27,7 @@ global TEST_WEBHOOK_FILE := ""      ; set after vault init
 global TEST_WEBHOOK_URL := ""       ; cached in memory
 global TEST_PING_COUNT := 0
 global VAULT_ID_FILE := ""
-
+global SESSION_PASSWORD_HASH_FILE := A_Temp "\.session_pw_hash"
 ; Master Credentials
 global MASTER_KEY := ""
 global DISCORD_WEBHOOK := ""
@@ -998,14 +998,39 @@ ValidateHwidBinding(hwid, discordId) {
 }
 
 StartSessionWatchdog() {
-    SetTimer CheckSessionValidity, 300000  ; Check every 5 minutes
+    SetTimer CheckCredentialSync, 60000
+    SetTimer CheckSessionValidity, 300000  ; check every 60 seconds  ; Check every 5 minutes
 }
+CheckSessionValidity() { 
+    if !ValidateNotBanned() 
+        { ShowBanMessage()
+             ExitApp 
+            }
+            }
 
-CheckSessionValidity() {
-    if !ValidateNotBanned() {
-        ShowBanMessage()
-        ExitApp
-    }
+
+
+
+
+
+
+CheckSessionValid() {
+    global SESSION_TOKEN_FILE
+
+    if !FileExist(SESSION_TOKEN_FILE)
+        return false
+
+    token := Trim(FileRead(SESSION_TOKEN_FILE))
+
+    ; Fetch current credentials
+    creds := FetchCredentialsFromManifest()  ; or Cloudflare
+    if (!creds.success)
+        return false
+
+    hwid := GetHardwareId()
+    expectedToken := HashString(creds.username . creds.password . hwid  ) ; you need same A_Now? Or store timestamp separately
+
+    return (token = expectedToken)
 }
 
 ; ===============================================================
@@ -1303,19 +1328,44 @@ FetchCredentialsFromCloudflare() {
 
 
 CheckSession() {
-    global SESSION_TOKEN_FILE
+    global SESSION_TOKEN_FILE, MANIFEST_URL
 
+    ; 1️⃣ Make sure session token exists
     if !FileExist(SESSION_TOKEN_FILE)
         return false
 
-    try {
-        token := Trim(FileRead(SESSION_TOKEN_FILE, "UTF-8"))
-        return (token != "")
-    } catch {
+    token := ""
+    try token := Trim(FileRead(SESSION_TOKEN_FILE, "UTF-8"))
+
+    if (token = "")
+        return false
+
+    ; 2️⃣ Fetch current credentials
+    creds := FetchCredentialsFromManifest()
+    
+    ; Fallback: try Cloudflare if manifest fails
+    if (!creds.success || creds.username = "" || creds.password = "") {
+        creds := FetchCredentialsFromCloudflare()
+    }
+
+    ; If still missing creds, fail session
+    if (creds.username = "" || creds.password = "")
+        return false
+
+    ; 3️⃣ Compute expected token for current credentials + HWID
+    hwid := GetHardwareId()
+    expectedToken := HashString(creds.username . creds.password . hwid . A_Now)
+
+    ; 4️⃣ Compare token
+    if (token != expectedToken) {
+        ; Password may have changed → invalidate session
+        try FileDelete(SESSION_TOKEN_FILE)
         return false
     }
-}
 
+    ; Token is valid
+    return true
+}
 
 CreateLoginGui() {
     global gLoginGui, COLORS
@@ -2666,3 +2716,49 @@ SendBanWebhook() {
            MsgBox "❌ Webhook failed! Check " A_Temp "\v1ln_webhook.log", "Test Failed", "Icon!"
    }
    
+
+   CheckCredentialSync() {
+    global WORKER_URL, USERNAME_FILE, ACCESS_KEY_FILE
+
+    try {
+        ; Read current local login
+        localUser := ""
+        localPass := ""
+
+        if FileExist(USERNAME_FILE)
+            localUser := Trim(FileRead(USERNAME_FILE, "UTF-8"))
+
+        if FileExist(ACCESS_KEY_FILE)
+            localPass := Trim(FileRead(ACCESS_KEY_FILE, "UTF-8"))
+
+        ; Get server credentials
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(10000, 10000, 10000, 10000)
+        req.Open("POST", WORKER_URL "/get-credentials", false)
+        req.SetRequestHeader("Content-Type", "application/json")
+        req.Send("{}")
+
+        if (req.Status != 200)
+            return  ; fail-open
+
+        resp := req.ResponseText
+
+        if !RegExMatch(resp, '"username"\s*:\s*"([^"]*)"', &u)
+            return
+        if !RegExMatch(resp, '"password"\s*:\s*"([^"]*)"', &p)
+            return
+
+        serverUser := u[1]
+        serverPass := p[1]
+
+        ; If mismatch → force logout
+        if (localUser != serverUser || localPass != serverPass) {
+            MsgBox "Session expired. Credentials changed.`nLogging out...", "V1LN Clan", "Icon!"
+            ExitApp
+        }
+
+    } catch {
+        ; Optional: exit on failure
+        ; ExitApp
+    }
+}
