@@ -1,6 +1,15 @@
 {
   "logs": [
     {
+      "t": "2026-03-05 22:51:47",
+      "pc": "MIGUEL_PC",
+      "user": "cruzm",
+      "discordId": "1059112084530548756",
+      "hwid": "1686322601",
+      "role": "user",
+      "loginUser": "V1LNClan@discord"
+    },
+    {
       "t": "2026-03-05 22:42:19",
       "pc": "FONDK-AU74S73N9",
       "user": "albec",
