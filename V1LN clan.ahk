@@ -1,7 +1,7 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 #NoTrayIcon
-global LAUNCHER_VERSION := "1.0.7"
+global LAUNCHER_VERSION := "1.0.8"
 
 ; ================= AUTHENTICATION GLOBALS =================
 global WORKER_URL := "https://tight-dust-10d2.lewisjenkins558.workers.dev/"
@@ -146,7 +146,8 @@ InitializeSecureVault() {
     global DISCORD_ID_FILE, DISCORD_BAN_FILE, ADMIN_DISCORD_FILE
     global HWID_BINDING_FILE, HWID_BAN_FILE, MACHINE_BAN_FILE
     global MANIFEST_URL, MACRO_LAUNCHER_PATH, SESSION_TOKEN_FILE, USERNAME_FILE, ACCESS_KEY_FILE
-    
+    SESSION_FILE := SECURE_VAULT "\.session"
+SESSION_LOG_FILE := SECURE_VAULT "\session_log.txt"
     MACHINE_KEY := GetOrCreatePersistentKey()
     
     dirHash := HashString(MACHINE_KEY . A_ComputerName)
@@ -1354,7 +1355,7 @@ CheckSession() {
 
     ; 3️⃣ Compute expected token for current credentials + HWID
     hwid := GetHardwareId()
-    expectedToken := HashString(creds.username . creds.password . hwid . A_Now)
+  expectedToken := HashString(creds.username . creds.password . hwid)
 
     ; 4️⃣ Compare token
     if (token != expectedToken) {
@@ -1482,7 +1483,7 @@ if !validCreds.success {
     }
     
     ; Create session token
-    sessionToken := HashString(username . password . hwid . A_Now)
+    sessionToken := HashString(username . password . hwid)
     try {
         if FileExist(SESSION_TOKEN_FILE)
             FileDelete SESSION_TOKEN_FILE
