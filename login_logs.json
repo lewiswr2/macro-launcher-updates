@@ -1,6 +1,15 @@
 {
   "logs": [
     {
+      "t": "2026-03-05 15:52:02",
+      "pc": "JAXSONS_LAPTOP",
+      "user": "jaxso",
+      "discordId": "1186876797548236820",
+      "hwid": "554426929",
+      "role": "user",
+      "loginUser": "V1LNClan@discord"
+    },
+    {
       "t": "2026-03-05 21:41:38",
       "pc": "PC-FILIP",
       "user": "darkb",
