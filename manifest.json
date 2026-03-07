@@ -1,56 +1,11 @@
 {
   "version": "1.3.5",
   "launcher_version": "1.0.8",
-  "zip_url": "https://github.com/reversals850/macro-launcher-updates/raw/main/Macros.zip",
-  "master_key": "ASD89NFDSN297HREFNJINFIJN!8Y38RHFHOASNFKLSDNFDKSJBNFDISDNFKSDNQWHUEBUWEBFUYWEBYWBFSDHBFDSJFBSDJKFBSDUHFBEWKJNFWKJM DSFKVMDSUIVNWEIFEWOIRF79382Y3R789Y23DF23F28R732R7823HF8723HF2837HFWE9FHD87123H121RF9H23RFHISDBFSDJKFB",
-  "webhook": "https://discord.com/api/webhooks/1469429493599965459/6JrZAN8U4oct2ZaRc8ujU2Kgm3Jm-a03yHsWWObwMZwsVp_ppPE3p_j3GqPd6UM63XwI",
-  "launcher_url": "https://raw.githubusercontent.com/reversals850/macro-launcher-updates/main/MacroLauncher.ahk",
-  "login_url": "https://raw.githubusercontent.com/reversals850/macro-launcher-updates/main/V1LN%20clan.ahk",
-  "cred_user": "V1LNClan@discord",
-  "cred_password": "HDK74NXI89DJNZ23!CG44Z874g55Hf99UB",
-  "cred_hash": "372118388",
-  "banned_discord_ids": [
-    "811922753900511294"
-  ],
-  "admin_discord_ids": [
-    "898236174039138304"
-  ],
-  "banned_hwids": [
-    "1807209018"
-  ],
-  "hwid_bindings": {
-    "123123": "1525703921",
-    "123123123": "1525703921",
-    "1247055057489231914": "1525703921",
-    "886398974456655892": "160377749",
-    "898236174039138304": "1208564545",
-    "836235851074895954": "1302661147",
-    "1043600406086942792": "1962975233",
-    "1347431404065132604": "1979121218",
-    "315846302237720576": "1289919488",
-    "965553236096454686": "2098654538",
-    "1400562795602247682": "2038014104",
-    "12312312312312312": "1525703921",
-    "662572881514856458": "995895463",
-    "991062716338827384": "911929826",
-    "1231103345599713324": "1326012619",
-    "953380948601339985": "1427585753",
-    "692031471447179327": "1329553767",
-    "431200302797160488": "444867107",
-    "706356285821681714": "853603900",
-    "1157656828751118339": "1940644548",
-    "270257973387984896": "329984208",
-    "1038295474530177054": "251399483",
-    "498122354095030284": "590825412",
-    "1050876617485991977": "132969879"
-  },
+  "login_version": "1.0.8",
+  "package_version": "1.3.5",
   "changelog": [
     "NEW MACRO'S ADDED:",
     "LEVEL UP MODE!!!",
     "ANTI AFK!!!"
-  ],
-  "panic_mode": false,
-  "panic_reason": "",
-  "panic_activated_at": "2026-01-26T06:25:54.820Z",
-  "panic_deactivated_at": "2026-01-26T06:27:35.683Z"
+  ]
 }
