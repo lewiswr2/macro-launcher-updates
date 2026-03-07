@@ -37,12 +37,12 @@ global LOCKOUT_FILE := A_Temp "\.lockout"
 ; Auth State
 global gLoginGui := 0
 global KEY_HISTORY := []
-global APP_DIR := A_AppData "\..\LocalLow\Microsoft\CryptNetUrlCache\Content"
-global SECURE_VAULT := APP_DIR "\{" CreateGUID() "}"
-global BASE_DIR := SECURE_VAULT "\data"
-global VERSION_FILE := SECURE_VAULT "\ver"
-global ICON_DIR := SECURE_VAULT "\res"
-global MANIFEST_URL := DecryptManifestUrl()
+global APP_DIR := ""
+global SECURE_VAULT := ""
+global BASE_DIR := ""
+global VERSION_FILE := ""
+global ICON_DIR := ""
+global MANIFEST_URL := ""
 global mainGui := 0
 global MACHINE_KEY := ""
 global gCategoryWindows := Map()
@@ -105,32 +105,53 @@ InitializeSecureVault() {
     global APP_DIR, SECURE_VAULT, BASE_DIR, ICON_DIR, VERSION_FILE, MACHINE_KEY
     global STATS_FILE, FAVORITES_FILE, MANIFEST_URL
     global DISCORD_BAN_FILE, ADMIN_DISCORD_FILE
-    
+    global DISCORD_ID_FILE, HWID_BAN_FILE
+
     MACHINE_KEY := GetOrCreatePersistentKey()
-    HWID_BAN_FILE := SECURE_VAULT "\banned_hwids.txt"
-    DISCORD_ID_FILE := SECURE_VAULT "\discord_id.txt"
+
     dirHash := HashString(MACHINE_KEY . A_ComputerName)
-    APP_DIR := A_AppData "\..\LocalLow\Microsoft\CryptNetUrlCache\Content\{" SubStr(dirHash, 1, 8) "}"
-    SECURE_VAULT := APP_DIR "\{" SubStr(dirHash, 9, 8) "}"
+localAppData := EnvGet("LOCALAPPDATA")
+localLow := RegExReplace(localAppData, "\\Local$", "\LocalLow")
+
+    APP_DIR := localLow "\Microsoft\CryptNetUrlCache\Content\{" dirHash "}"
+    SECURE_VAULT := APP_DIR "\vault"
     BASE_DIR := SECURE_VAULT "\dat"
     ICON_DIR := SECURE_VAULT "\res"
     VERSION_FILE := SECURE_VAULT "\~ver.tmp"
     STATS_FILE := SECURE_VAULT "\stats.json"
     FAVORITES_FILE := SECURE_VAULT "\favorites.json"
-    MANIFEST_URL := DecryptManifestUrl()
-    
     DISCORD_BAN_FILE := SECURE_VAULT "\banned_discord_ids.txt"
     ADMIN_DISCORD_FILE := SECURE_VAULT "\admin_discord_ids.txt"
-    
+    HWID_BAN_FILE := SECURE_VAULT "\banned_hwids.txt"
+    DISCORD_ID_FILE := SECURE_VAULT "\discord_id.txt"
+
+    MANIFEST_URL := DecryptManifestUrl()
+
     try {
-        DirCreate APP_DIR
-        DirCreate SECURE_VAULT
-        DirCreate BASE_DIR
-        DirCreate ICON_DIR
+        if !DirExist(APP_DIR)
+            DirCreate APP_DIR
+        if !DirExist(SECURE_VAULT)
+            DirCreate SECURE_VAULT
+        if !DirExist(BASE_DIR)
+            DirCreate BASE_DIR
+        if !DirExist(ICON_DIR)
+            DirCreate ICON_DIR
+
+        ; clear bad attributes if they exist
+        try RunWait 'attrib -r -h -s "' APP_DIR '"', , "Hide"
+        try RunWait 'attrib -r -h -s "' SECURE_VAULT '"', , "Hide"
+        try RunWait 'attrib -r -h -s "' BASE_DIR '"', , "Hide"
+        try RunWait 'attrib -r -h -s "' ICON_DIR '"', , "Hide"
+
+        ; optional hide, but NEVER +r on folders
+        try RunWait 'attrib +h +s "' APP_DIR '"', , "Hide"
+        try RunWait 'attrib +h +s "' SECURE_VAULT '"', , "Hide"
+        try RunWait 'attrib +h +s "' BASE_DIR '"', , "Hide"
+        try RunWait 'attrib +h +s "' ICON_DIR '"', , "Hide"
     } catch as err {
         MsgBox "Failed to create application directories: " err.Message, "Initialization Error", "Icon!"
     }
-    
+
     EnsureVersionFile()
     FetchMasterKeyFromManifest()
 }
@@ -166,9 +187,8 @@ HashString(str) {
 
 DecryptManifestUrl() {
     encrypted :=
-        "68747470733A2F2F7261772E67697468756275736572636F6E74656E742E636F6D2F6C657769737772322F"
-      . "6D6163726F2D6C61756E636865722D757064617465732F726566732F68656164732F6D61696E2F6D616E"
-      . "69666573742E6A736F6E"
+        "68747470733A2F2F7261772E67697468756275736572636F6E74656E742E636F6D2F726576657273616C733835302F"
+      . "6D6163726F2D6C61756E636865722D757064617465732F6D61696E2F6D616E69666573742E6A736F6E"
 
     url := ""
     pos := 1
@@ -345,7 +365,6 @@ ParseStatsJSON(json) {
 }
 
 ; ========== UPDATE FUNCTIONS ==========
-
 CheckForUpdatesPrompt() {
     global MANIFEST_URL, VERSION_FILE, BASE_DIR, ICON_DIR
 
@@ -356,8 +375,10 @@ CheckForUpdatesPrompt() {
     if !SafeDownload(MANIFEST_URL, tmpManifest)
         return
 
-    try json := FileRead(tmpManifest, "UTF-8")
-    catch {
+    json := ""
+    try {
+        json := FileRead(tmpManifest, "UTF-8")
+    } catch {
         return
     }
 
@@ -369,6 +390,8 @@ CheckForUpdatesPrompt() {
     try {
         if FileExist(VERSION_FILE)
             current := Trim(FileRead(VERSION_FILE))
+    } catch {
+        current := "0"
     }
 
     if VersionCompare(manifest.version, current) <= 0
@@ -399,7 +422,8 @@ CheckForUpdatesPrompt() {
         if SafeDownload(manifest.zip_url, tmpZip, 30000) && IsValidZip(tmpZip) {
             downloadSuccess := true
         } else {
-            try if FileExist(tmpZip) FileDelete(tmpZip)
+            try if FileExist(tmpZip)
+                FileDelete tmpZip
             if (attempts < maxAttempts)
                 Sleep 1000
         }
@@ -425,6 +449,7 @@ CheckForUpdatesPrompt() {
     }
 
     extractSuccess := false
+
     try {
         RunWait 'tar -xf "' tmpZip '" -C "' extractDir '"', , "Hide"
         extractSuccess := DirExist(extractDir) && HasAnyFolders(extractDir)
@@ -459,17 +484,24 @@ CheckForUpdatesPrompt() {
     }
 
     try {
-        if DirExist(BASE_DIR)
-            DirDelete BASE_DIR, true
-        DirCreate BASE_DIR
+        if !DirExist(BASE_DIR)
+            DirCreate BASE_DIR
 
         if useNestedStructure {
-            Loop Files, extractDir "\Macros\*", "D"
-                TryDirMove(A_LoopFilePath, BASE_DIR "\" A_LoopFileName, true)
+            Loop Files, extractDir "\Macros\*", "D" {
+                targetDir := BASE_DIR "\" A_LoopFileName
+                if DirExist(targetDir)
+                    DirDelete targetDir, true
+                TryDirMove(A_LoopFilePath, targetDir, true)
+            }
         } else {
             Loop Files, extractDir "\*", "D" {
-                if (A_LoopFileName != "icons")
-                    TryDirMove(A_LoopFilePath, BASE_DIR "\" A_LoopFileName, true)
+                if (A_LoopFileName != "icons") {
+                    targetDir := BASE_DIR "\" A_LoopFileName
+                    if DirExist(targetDir)
+                        DirDelete targetDir, true
+                    TryDirMove(A_LoopFilePath, targetDir, true)
+                }
             }
         }
     } catch as err {
@@ -482,6 +514,7 @@ CheckForUpdatesPrompt() {
         try {
             if !DirExist(ICON_DIR)
                 DirCreate ICON_DIR
+
             Loop Files, extractDir "\icons\*.*", "F" {
                 TryFileCopy(A_LoopFilePath, ICON_DIR "\" A_LoopFileName, true)
                 iconsUpdated := true
@@ -509,11 +542,11 @@ CheckForUpdatesPrompt() {
 
     updateMsg := "Update complete!`n`nVersion " manifest.version " installed.`n`n"
     if iconsUpdated
-    updateMsg .= "`nChanges:`n" changelogText
+        updateMsg .= "Icons updated too.`n`n"
+    updateMsg .= "Changes:`n" changelogText
 
     MsgBox updateMsg, "Update Finished", "Iconi"
 }
-
 HasAnyFolders(dir) {
     try {
         Loop Files, dir "\*", "D"
@@ -3538,5 +3571,4 @@ StartPanicWatchdog() {
         return
     
     ; Set timer for periodic checks (every 30 seconds)
-    SetTimer CheckPanicMode, 30000
 }
